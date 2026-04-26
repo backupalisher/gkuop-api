@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ГКУ ОП Заявки</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+    <style>
+        /* Минимальные специфичные стили только для index.html */
+        .header-actions {
+            display: flex;
+            align-items: center;
+            gap: var(--space-3);
+        }
+        .header-actions .btn {
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        .header-actions .btn:hover {
+            background: rgba(255,255,255,0.2);
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>ГКУ ОП <span>Заявки</span></h1>
+    </div>
+
+    <div class="container">
+        <!-- Контейнер для тостов -->
+        <div class="toast-container" id="toastContainer"></div>
+
+        <div class="error-msg" id="errorMsg"></div>
+
+        <div class="tabs">
+            <button class="tab-btn active" id="tabActive" onclick="switchTab('active')">
+                Активные <span class="count" id="countActive">—</span>
+            </button>
+            <button class="tab-btn" id="tabArchived" onclick="switchTab('archived')">
+                Архив <span class="count" id="countArchived">—</span>
+            </button>
+        </div>
+
+        <div class="filters">
+            <input type="text" class="input" id="searchInput"
+                placeholder="Поиск по номеру, теме, автору, устройству, комплектующему, инв. номеру, согласованию, работам, заключению, причине..." />
+            <select class="select" id="statusFilter">
+                <option value="">Все статусы</option>
+            </select>
+            <button class="btn btn-primary" onclick="loadTickets()">🔍 Поиск</button>
+            <button class="btn btn-outline" onclick="resetFilters()">✕ Сброс</button>
+            <button class="btn btn-outline" onclick="rebuildDatabase()" id="rebuildBtn">⟳ Обновить данные</button>
+        </div>
+
+        <div class="table-wrap">
+            <table>
+                <thead>
+                    <tr>
+                        <th onclick="sortBy('ticket_number')">№ заявки <span class="arrow" id="arr-ticket_number"></span></th>
+                        <th onclick="sortBy('status')">Статус <span class="arrow" id="arr-status"></span></th>
+                        <th onclick="sortBy('inventory_number')">Инв. номер <span class="arrow" id="arr-inventory_number"></span></th>
+                        <th>Кабинет</th>
+                        <th onclick="sortBy('last_updated_date')">Обновлено <span class="arrow" id="arr-last_updated_date"></span></th>
+                    </tr>
+                </thead>
+                <tbody id="ticketsBody">
+                    <tr><td colspan="5" class="loading">Загрузка...</td></tr>
+                </tbody>
+            </table>
+            <div class="pagination" id="pagination"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 1;
+        let currentSort = 'last_updated_date';
+        let currentOrder = 'desc';
+        let currentTab = 'active';
+
+        // ─── Toast-уведомления ──────────────────────────────
+        function showToast(message, type = 'info', duration = 4000) {
+            const container = document.getElementById('toastContainer');
+            const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+                <span class="toast-msg">${message}</span>
+                <button class="toast-close" onclick="this.closest('.toast').classList.add('removing');setTimeout(()=>this.closest('.toast').remove(),300)">✕</button>
+            `;
+            container.appendChild(toast);
+            if (duration > 0) {
+                setTimeout(() => {
+                    toast.classList.add('removing');
+                    setTimeout(() => toast.remove(), 300);
+                }, duration);
+            }
+        }
+
+        // ─── Модальное окно ─────────────────────────────────
+        function showModal(title, message, confirmText = 'Да', cancelText = 'Отмена') {
+            return new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.className = 'modal-overlay';
+                overlay.innerHTML = `
+                    <div class="modal">
+                        <h3>${title}</h3>
+                        <p>${message}</p>
+                        <div class="modal-actions">
+                            <button class="btn-cancel">${cancelText}</button>
+                            <button class="btn-confirm">${confirmText}</button>
+                        </div>
+                    </div>
+                `;
+                overlay.querySelector('.btn-cancel').onclick = () => {
+                    overlay.remove();
+                    resolve(false);
+                };
+                overlay.querySelector('.btn-confirm').onclick = () => {
+                    overlay.remove();
+                    resolve(true);
+                };
+                overlay.addEventListener('click', (e) => {
+                    if (e.target === overlay) {
+                        overlay.remove();
+                        resolve(false);
+                    }
+                });
+                document.body.appendChild(overlay);
+            });
+        }
+
+        async function loadTabCounts() {
+            try {
+                const r = await fetch('/api/statistics');
+                const data = await r.json();
+                document.getElementById('countActive').textContent = data.active ?? '—';
+                document.getElementById('countArchived').textContent = data.archived ?? '—';
+            } catch (e) {
+                console.error('Stats error:', e);
+            }
+        }
+
+        function switchTab(tab) {
+            currentTab = tab;
+            currentPage = 1;
+            document.getElementById('tabActive').classList.toggle('active', tab === 'active');
+            document.getElementById('tabArchived').classList.toggle('active', tab === 'archived');
+            loadTickets();
+        }
+
+        async function loadStatuses() {
+            try {
+                const r = await fetch('/api/statuses');
+                const data = await r.json();
+                const sel = document.getElementById('statusFilter');
+                data.statuses.forEach(s => {
+                    const opt = document.createElement('option');
+                    opt.value = s;
+                    opt.textContent = s;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.error('Statuses error:', e);
+            }
+        }
+
+        function statusClass(status) {
+            if (!status) return 'status-default';
+            const s = status.toLowerCase();
+            if (s.includes('отклон') || s.includes('закрыт')) return 'status-rejected';
+            if (s.includes('комплектующ')) return 'status-parts';
+            if (s.includes('выполн')) return 'status-completed';
+            if (s.includes('соглас') || s.includes('решен')) return 'status-approved';
+            if (s.includes('работ')) return 'status-work';
+            if (s.includes('нов') || s.includes('созд')) return 'status-new';
+            return 'status-default';
+        }
+
+        function formatDate(d) {
+            if (!d) return '—';
+            const dt = new Date(d);
+            return dt.toLocaleDateString('ru-RU', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        async function loadTickets() {
+            const search = document.getElementById('searchInput').value;
+            const status = document.getElementById('statusFilter').value;
+
+            const params = new URLSearchParams({
+                page: currentPage,
+                per_page: 50,
+                sort_by: currentSort,
+                sort_order: currentOrder,
+                archived: currentTab === 'archived' ? '1' : '0',
+            });
+            if (search) params.set('search', search);
+            if (status) params.set('status', status);
+
+            document.getElementById('ticketsBody').innerHTML =
+                '<tr><td colspan="5" class="loading">Загрузка...</td></tr>';
+
+            try {
+                const r = await fetch('/api/tickets?' + params.toString());
+                const data = await r.json();
+
+                if (data.error) {
+                    showError(data.error);
+                    return;
+                }
+
+                const tbody = document.getElementById('ticketsBody');
+                if (data.tickets.length === 0) {
+                    tbody.innerHTML = '<tr><td colspan="5" class="empty">Заявки не найдены</td></tr>';
+                } else {
+                    tbody.innerHTML = data.tickets.map((t, idx) => `
+                        <tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
+                            <td data-label="№ заявки"><a href="/tickets/${t.ticket_number}" class="ticket-link">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
+                            <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}</span></td>
+                            <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
+                            <td data-label="Кабинет">${t.cabinet ? t.office + ' / ' + t.cabinet : (t.office || '—')}</td>
+                            <td data-label="Обновлено">${formatDate(t.last_updated_date)}</td>
+                        </tr>
+                    `).join('');
+                }
+
+                renderPagination(data);
+                hideError();
+            } catch (e) {
+                showError('Ошибка загрузки: ' + e.message);
+            }
+        }
+
+        function renderPagination(data) {
+            const el = document.getElementById('pagination');
+            if (data.total_pages <= 1) {
+                el.innerHTML = '';
+                return;
+            }
+            let html = '';
+            html += `<button class="page-btn" onclick="goPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>‹</button>`;
+            for (let p = 1; p <= data.total_pages; p++) {
+                if (p === 1 || p === data.total_pages || Math.abs(p - currentPage) <= 2) {
+                    html += `<button class="page-btn ${p === currentPage ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`;
+                } else if (!html.endsWith('<span class="page-ellipsis">…</span>')) {
+                    html += '<span class="page-ellipsis">…</span>';
+                }
+            }
+            html += `<button class="page-btn" onclick="goPage(${currentPage + 1})" ${currentPage >= data.total_pages ? 'disabled' : ''}>›</button>`;
+            el.innerHTML = html;
+        }
+
+        function goPage(p) {
+            currentPage = p;
+            loadTickets();
+            // Плавный скролл к таблице
+            document.querySelector('.table-wrap').scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+
+        function sortBy(field) {
+            if (currentSort === field) {
+                currentOrder = currentOrder === 'asc' ? 'desc' : 'asc';
+            } else {
+                currentSort = field;
+                currentOrder = 'desc';
+            }
+            document.querySelectorAll('th .arrow').forEach(a => a.textContent = '');
+            const arrow = document.getElementById('arr-' + field);
+            if (arrow) arrow.textContent = currentOrder === 'asc' ? '▲' : '▼';
+            currentPage = 1;
+            loadTickets();
+        }
+
+        function resetFilters() {
+            document.getElementById('searchInput').value = '';
+            document.getElementById('statusFilter').value = '';
+            currentPage = 1;
+            loadTickets();
+        }
+
+        async function rebuildDatabase() {
+            const confirmed = await showModal(
+                'Обновление данных',
+                'Обработать новые письма из почты? Это может занять некоторое время.'
+            );
+            if (!confirmed) return;
+
+            const btn = document.getElementById('rebuildBtn');
+            btn.disabled = true;
+            btn.textContent = '⟳ Обновление...';
+            showError('');
+
+            try {
+                const r = await fetch('/api/rebuild', { method: 'POST' });
+                const data = await r.json();
+
+                if (data.error) {
+                    showError('Ошибка: ' + data.error);
+                    showToast('Ошибка обновления: ' + data.error, 'error');
+                } else {
+                    showToast('✓ Данные успешно обновлены', 'success');
+                    document.getElementById('errorMsg').style.display = 'none';
+                    loadTabCounts();
+                    loadTickets();
+                }
+            } catch (e) {
+                showError('Ошибка соединения: ' + e.message);
+                showToast('Ошибка соединения: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '⟳ Обновить данные';
+            }
+        }
+
+        function showError(msg) {
+            const el = document.getElementById('errorMsg');
+            el.textContent = msg;
+            el.style.display = msg ? 'block' : 'none';
+        }
+
+        function hideError() {
+            document.getElementById('errorMsg').style.display = 'none';
+        }
+
+        // Enter для поиска
+        document.getElementById('searchInput').addEventListener('keydown', e => {
+            if (e.key === 'Enter') loadTickets();
+        });
+
+        // Инициализация
+        loadTabCounts();
+        loadStatuses();
+        loadTickets();
+    </script>
+</body>
+</html>

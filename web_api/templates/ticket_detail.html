@@ -1,0 +1,790 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Заявка #{{ ticket_number }} — ГКУ ОП Заявки</title>
+    <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+    <div class="header">
+        <h1>Заявка #{{ ticket_number }}</h1>
+    </div>
+
+    <div class="container">
+        <!-- Контейнер для тостов -->
+        <div class="toast-container" id="toastContainer"></div>
+
+        <div id="content">
+            <div class="loading">Загрузка...</div>
+        </div>
+    </div>
+
+    <script>
+        const ticketNumber = '{{ ticket_number }}';
+
+        // ─── Toast-уведомления ──────────────────────────────
+        function showToast(message, type = 'info', duration = 4000) {
+            const container = document.getElementById('toastContainer');
+            const icons = { success: '✅', error: '❌', warning: '⚠️', info: 'ℹ️' };
+            const toast = document.createElement('div');
+            toast.className = `toast toast-${type}`;
+            toast.innerHTML = `
+                <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
+                <span class="toast-msg">${message}</span>
+                <button class="toast-close" onclick="this.closest('.toast').classList.add('removing');setTimeout(()=>this.closest('.toast').remove(),300)">✕</button>
+            `;
+            container.appendChild(toast);
+            if (duration > 0) {
+                setTimeout(() => {
+                    toast.classList.add('removing');
+                    setTimeout(() => toast.remove(), 300);
+                }, duration);
+            }
+        }
+
+        // ─── Модальное окно ─────────────────────────────────
+        function showModal(title, message, confirmText = 'Да', cancelText = 'Отмена') {
+            return new Promise((resolve) => {
+                const overlay = document.createElement('div');
+                overlay.className = 'modal-overlay';
+                overlay.innerHTML = `
+                    <div class="modal">
+                        <h3>${title}</h3>
+                        <p>${message}</p>
+                        <div class="modal-actions">
+                            <button class="btn-cancel">${cancelText}</button>
+                            <button class="btn-confirm">${confirmText}</button>
+                        </div>
+                    </div>
+                `;
+                overlay.querySelector('.btn-cancel').onclick = () => {
+                    overlay.remove();
+                    resolve(false);
+                };
+                overlay.querySelector('.btn-confirm').onclick = () => {
+                    overlay.remove();
+                    resolve(true);
+                };
+                overlay.addEventListener('click', (e) => {
+                    if (e.target === overlay) {
+                        overlay.remove();
+                        resolve(false);
+                    }
+                });
+                document.body.appendChild(overlay);
+            });
+        }
+
+        function statusClass(status) {
+            if (!status) return 'status-default';
+            const s = status.toLowerCase();
+            if (s.includes('отклон') || s.includes('закрыт')) return 'status-rejected';
+            if (s.includes('комплектующ')) return 'status-parts';
+            if (s.includes('выполн')) return 'status-completed';
+            if (s.includes('соглас') || s.includes('решен')) return 'status-approved';
+            if (s.includes('работ')) return 'status-work';
+            if (s.includes('нов') || s.includes('созд')) return 'status-new';
+            return 'status-default';
+        }
+
+        async function completeTicket() {
+            const confirmed = await showModal('Выполнение заявки', 'Отметить заявку как выполненную?');
+            if (!confirmed) return;
+            try {
+                const r = await fetch(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
+                const data = await r.json();
+                if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                showToast('✓ Заявка отмечена как выполненная', 'success');
+                loadTicket();
+            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function archiveTicket() {
+            const confirmed = await showModal('Архивирование', 'Отправить заявку в архив?');
+            if (!confirmed) return;
+            try {
+                const r = await fetch(`/api/tickets/${ticketNumber}/archive`, { method: 'POST' });
+                const data = await r.json();
+                if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                showToast('📦 Заявка отправлена в архив', 'success');
+                loadTicket();
+            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function restoreTicket() {
+            const confirmed = await showModal('Восстановление', 'Восстановить заявку из архива?');
+            if (!confirmed) return;
+            try {
+                const r = await fetch(`/api/tickets/${ticketNumber}/restore`, { method: 'POST' });
+                const data = await r.json();
+                if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                showToast('↩ Заявка восстановлена из архива', 'success');
+                loadTicket();
+            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        const fieldLabels = {
+            'subject': 'Тема',
+            'inventory_number': 'Инв. номер',
+            'printer_model': 'Оборудование',
+            'office': 'Офис',
+            'cabinet': 'Кабинет',
+            'component': 'Комплектующее',
+            'status': 'Статус',
+            'priority': 'Приоритет',
+            'assigned_to': 'Назначена',
+            'author_name': 'Автор',
+            'contact_phone': 'Телефон',
+            'department': 'Подразделение',
+            'position': 'Должность',
+            'current_note': 'Примечание',
+            'required_action': 'Требуется',
+            'cause': 'Причина обращения',
+            'fault_description': 'Описание неисправности',
+            'work_done': 'Проведены работы',
+            'tech_conclusion': 'Тех. вывод',
+        };
+
+        function fieldLabel(key) {
+            return fieldLabels[key] || key;
+        }
+
+        function escapeHtml(text) {
+            if (!text) return text;
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function formatDate(d) {
+            if (!d) return '—';
+            const dt = new Date(d);
+            return dt.toLocaleDateString('ru-RU', {
+                day: '2-digit', month: '2-digit', year: 'numeric',
+                hour: '2-digit', minute: '2-digit'
+            });
+        }
+
+        async function loadTicket() {
+            try {
+                const r = await fetch(`/api/tickets/${ticketNumber}`);
+                const data = await r.json();
+
+                if (data.error) {
+                    document.getElementById('content').innerHTML =
+                        `<div class="error">${data.error}</div>`;
+                    return;
+                }
+
+                const t = data.ticket;
+                const history = data.history || [];
+
+                // Собираем актуальное состояние заявки из тикета + всех diff-записей истории
+                const s = { ...t };
+                const snapshots = history.filter(h => h.type === 'snapshot');
+                for (const snap of snapshots) {
+                    if (snap.changed_fields && typeof snap.changed_fields === 'object') {
+                        Object.assign(s, snap.changed_fields);
+                    }
+                }
+
+                let html = '';
+
+                // Кнопки действий
+                const isArchived = t.is_archived === true;
+                html += `<div class="action-buttons">`;
+                html += `<a href="/" class="btn-action btn-back">← Назад к списку</a>`;
+                html += `<span style="flex:1"></span>`;
+                if (!isArchived) {
+                    html += `<button class="btn-action btn-complete" onclick="completeTicket()">✓ Выполнено</button>`;
+                    html += `<button class="btn-action btn-archive" onclick="archiveTicket()">📦 В архив</button>`;
+                } else {
+                    html += `<button class="btn-action btn-restore" onclick="restoreTicket()">↩ Восстановить</button>`;
+                }
+                html += `</div>`;
+
+                // Основная информация
+                html += `<div class="card">
+                    <h2>Основная информация</h2>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="label">Номер заявки</div>
+                            <div class="value">#${t.ticket_number}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Статус</div>
+                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${s.status || '—'}</span></div>
+                        </div>
+                        ${s.soglasovano_line ? `<div class="info-item" style="grid-column: 1 / -1;">
+                            <div class="label">Согласование</div>
+                            <div class="value"><span class="soglasovano-line">${s.soglasovano_line}</span></div>
+                        </div>` : ''}
+                        <div class="info-item">
+                            <div class="label">Приоритет</div>
+                            <div class="value">${s.priority || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Требуется</div>
+                            <div class="value">${s.required_action || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Причина обращения</div>
+                            <div class="value">${s.cause || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Описание неисправности</div>
+                            <div class="value">${s.fault_description || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Проведены работы</div>
+                            <div class="value">${s.work_done || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Тех. вывод</div>
+                            <div class="value">${s.tech_conclusion || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Активна</div>
+                            <div class="value">${t.is_active ? 'Да' : 'Нет'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">В архиве</div>
+                            <div class="value">${isArchived ? 'Да' : 'Нет'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Дата создания</div>
+                            <div class="value">${formatDate(t.first_received_date)}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Последнее обновление</div>
+                            <div class="value">${formatDate(t.last_updated_date)}</div>
+                        </div>
+                    </div>
+                </div>`;
+
+                // Оборудование
+                html += `<div class="card">
+                    <h2>Оборудование</h2>
+                    <div class="info-grid">
+                        <div class="info-item">
+                            <div class="label">Инвентарный номер</div>
+                            <div class="value">${s.inventory_number || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Оборудование</div>
+                            <div class="value">${s.printer_model || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Комплектующее</div>
+                            <div class="value">${s.component || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Офис</div>
+                            <div class="value">${s.office || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Кабинет</div>
+                            <div class="value">${s.cabinet || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Автор</div>
+                            <div class="value">${s.author_name || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Подразделение</div>
+                            <div class="value">${s.department || '—'}</div>
+                        </div>
+                        <div class="info-item">
+                            <div class="label">Примечание</div>
+                            <div class="value">${escapeHtml(s.current_note) || '—'}</div>
+                        </div>
+                    </div>
+                </div>`;
+
+                // Тема письма
+                if (s.subject) {
+                    html += `<div class="card">
+                        <h2>Тема письма</h2>
+                        <div style="font-size: var(--font-size-base);">${s.subject}</div>
+                    </div>`;
+                }
+
+                // Изображения и документы
+                const images = data.images || [];
+                html += `<div class="card">
+                    <h2>Файлы (${images.length})</h2>`;
+
+                if (images.length > 0) {
+                    html += `<div class="images-grid">`;
+                    for (let idx = 0; idx < images.length; idx++) {
+                        const img = images[idx];
+                        const thumbUrl = img.thumbnail_url || img.download_url;
+                        const mime = img.mime_type || '';
+                        const ext = img.original_filename ? '.' + img.original_filename.split('.').pop().toLowerCase() : '';
+                        const isImage = mime.startsWith('image/');
+                        const typeClass = isImage ? 'file-type-img' :
+                            ext === '.pdf' ? 'file-type-pdf' :
+                            ext === '.docx' ? 'file-type-docx' :
+                            ext === '.xlsx' ? 'file-type-xlsx' :
+                            ext === '.txt' ? 'file-type-txt' : '';
+                        const typeLabel = isImage ? 'IMG' :
+                            ext === '.pdf' ? 'PDF' :
+                            ext === '.docx' ? 'DOCX' :
+                            ext === '.xlsx' ? 'XLSX' :
+                            ext === '.txt' ? 'TXT' : 'FILE';
+
+                        html += `<div class="image-card" data-index="${idx}">
+                            <div class="preview-wrap" onclick="openLightbox(${idx})">
+                                <img src="${thumbUrl}" alt="${img.original_filename}" loading="lazy" class="${isImage ? '' : 'contain'}"
+                                    onerror="this.parentElement.innerHTML='<div class=\\'doc-icon\\'>📄</div>'">
+                            </div>
+                            <button class="delete-btn" onclick="deleteImage(${img.id})" title="Удалить">✕</button>
+                            <div class="image-info">
+                                <div class="filename" title="${img.original_filename}">${img.original_filename}</div>
+                                <div class="file-meta">
+                                    <span class="file-type-badge ${typeClass}">${typeLabel}</span>
+                                    <span>${(img.file_size / 1024).toFixed(1)} КБ</span>
+                                </div>
+                            </div>
+                        </div>`;
+                    }
+                    html += `</div>`;
+                } else {
+                    html += `<div style="color: var(--color-text-muted); font-size: var(--font-size-base);">Нет прикреплённых файлов</div>`;
+                }
+
+                // Форма загрузки
+                if (!isArchived) {
+                    html += `<div class="upload-area" id="uploadArea"
+                        onclick="document.getElementById('fileInput').click()">
+                        <input type="file" id="fileInput"
+                            accept="image/jpeg,image/png,image/gif,application/pdf,.docx,.xlsx,text/plain,.txt"
+                            multiple onchange="handleFiles(this.files)">
+                        <div class="upload-label">📁 <strong>Загрузить файлы</strong><br>JPEG, PNG, GIF, PDF, DOCX, XLSX, TXT до 10 МБ</div>
+                        <div class="upload-hint">или перетащите файлы в эту область</div>
+                        <div class="upload-progress" id="uploadProgress"></div>
+                    </div>`;
+                }
+
+                html += `</div>`;
+
+                // История изменений
+                html += `<div class="card">
+                    <h2>История изменений (${history.length})</h2>`;
+
+                if (history.length === 0) {
+                    html += '<div style="color: var(--color-text-muted); font-size: var(--font-size-base);">История пуста</div>';
+                } else {
+                    history.forEach((h, idx) => {
+                        const isSnapshot = h.type === 'snapshot';
+                        html += `<div class="history-item">
+                            <div class="date">
+                                <span class="dot"></span>
+                                ${formatDate(h.date)}`;
+
+                        if (isSnapshot) {
+                            html += ` <span style="font-size:var(--font-size-xs);color:var(--color-text-secondary);">(письмо №${idx + 1})</span>`;
+                        }
+
+                        html += `</div>`;
+
+                        if (isSnapshot) {
+                            const changes = h.changed_fields || {};
+                            const changeEntries = Object.entries(changes).filter(([k, v]) => v);
+                            if (changeEntries.length > 0) {
+                                html += `<div class="changes">`;
+                                for (const [key, val] of changeEntries) {
+                                    html += `<span class="change-tag">${fieldLabel(key)}: ${val}</span>`;
+                                }
+                                html += `</div>`;
+                            } else {
+                                html += `<div style="color: var(--color-text-muted); font-size: var(--font-size-sm); margin-top: var(--space-1);">Нет изменений</div>`;
+                            }
+                        } else {
+                            if (h.status_before || h.status_after) {
+                                html += `<div style="margin-top:var(--space-1);font-size:var(--font-size-sm);">
+                                    Статус: <span class="status-badge ${statusClass(h.status_before)}">${h.status_before || '—'}</span>
+                                    → <span class="status-badge ${statusClass(h.status_after)}">${h.status_after || '—'}</span>
+                                </div>`;
+                            }
+                            if (h.comment) {
+                                html += `<div class="comment">${h.comment}</div>`;
+                            }
+                            if (h.changes && typeof h.changes === 'object') {
+                                html += `<div class="changes">`;
+                                for (const [key, val] of Object.entries(h.changes)) {
+                                    html += `<span class="change-tag">${fieldLabel(key)}: ${val}</span>`;
+                                }
+                                html += `</div>`;
+                            }
+                        }
+                        html += `</div>`;
+                    });
+                }
+                html += `</div>`;
+
+                document.getElementById('content').innerHTML = html;
+            } catch (e) {
+                document.getElementById('content').innerHTML =
+                    `<div class="error">Ошибка загрузки: ${e.message}</div>`;
+            }
+        }
+
+        loadTicket();
+
+        // ─── Глобальное состояние lightbox ───────────────────────────
+        let lbImages = [];
+        let lbCurrentIndex = 0;
+        let lbZoomed = false;
+        let lbScale = 1;
+        let lbPosX = 0, lbPosY = 0;
+        let lbIsDragging = false;
+        let lbDragStartX, lbDragStartY;
+
+        // ─── Drag & Drop ────────────────────────────────────────────
+        function setupDragDrop() {
+            const area = document.getElementById('uploadArea');
+            if (!area) return;
+
+            area.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.add('drag-over');
+            });
+
+            area.addEventListener('dragleave', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.remove('drag-over');
+            });
+
+            area.addEventListener('drop', (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                area.classList.remove('drag-over');
+                const files = e.dataTransfer.files;
+                if (files.length > 0) {
+                    handleFiles(files);
+                }
+            });
+        }
+
+        // ─── Обработка выбранных файлов ─────────────────────────────
+        function handleFiles(files) {
+            if (!files || files.length === 0) return;
+
+            const firstFile = files[0];
+            if (firstFile.type.startsWith('image/')) {
+                showInstantPreview(firstFile, files);
+            } else {
+                doUploadFiles(files);
+            }
+        }
+
+        // ─── Мгновенное превью перед загрузкой ──────────────────────
+        function showInstantPreview(file, allFiles) {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const overlay = document.createElement('div');
+                overlay.className = 'preview-overlay';
+                overlay.innerHTML = `
+                    <div class="preview-card">
+                        <img src="${e.target.result}" alt="Preview">
+                        <div style="font-size:var(--font-size-base);color:var(--color-text);">
+                            <strong>${escapeHtml(file.name)}</strong><br>
+                            <span style="color:var(--color-text-secondary);font-size:var(--font-size-sm);">${(file.size / 1024).toFixed(1)} КБ</span>
+                        </div>
+                        <div class="preview-actions">
+                            <button class="btn-cancel">Отмена</button>
+                            <button class="btn-confirm">Загрузить (${allFiles.length})</button>
+                        </div>
+                    </div>
+                `;
+                overlay._files = allFiles;
+                const btn = overlay.querySelector('.btn-confirm');
+                btn.onclick = function() {
+                    overlay.remove();
+                    doUploadFiles(overlay._files);
+                };
+                overlay.querySelector('.btn-cancel').onclick = () => overlay.remove();
+                document.body.appendChild(overlay);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // ─── Загрузка файлов на сервер ──────────────────────────────
+        async function doUploadFiles(files) {
+            if (!files || files.length === 0) return;
+            const progress = document.getElementById('uploadProgress');
+            if (!progress) return;
+
+            const formData = new FormData();
+            for (const file of files) {
+                formData.append('files', file);
+            }
+
+            progress.className = 'upload-progress';
+            progress.textContent = '⏳ Загрузка...';
+
+            try {
+                const r = await fetch(`/api/tickets/${ticketNumber}/images`, {
+                    method: 'POST',
+                    body: formData
+                });
+                const result = await r.json();
+
+                if (result.error) {
+                    progress.className = 'upload-progress error';
+                    progress.textContent = `❌ ${result.error}`;
+                    showToast('Ошибка загрузки: ' + result.error, 'error');
+                    return;
+                }
+
+                let msg = '';
+                if (result.uploaded && result.uploaded.length > 0) {
+                    msg += `✅ Загружено: ${result.uploaded.length}`;
+                }
+                if (result.errors && result.errors.length > 0) {
+                    msg += ` ⚠️ Ошибок: ${result.errors.length}`;
+                    console.warn('Upload errors:', result.errors);
+                    if (result.errors[0]) {
+                        msg += ` (${result.errors[0].error})`;
+                    }
+                }
+
+                const isError = result.errors && result.errors.length > 0 && (!result.uploaded || result.uploaded.length === 0);
+                progress.className = isError ? 'upload-progress error' : 'upload-progress success';
+                progress.textContent = msg || '❌ Не удалось загрузить файлы';
+
+                if (!isError) {
+                    showToast(`✅ Загружено ${result.uploaded.length} файлов`, 'success');
+                }
+
+                setTimeout(() => loadTicket(), 500);
+            } catch (e) {
+                progress.className = 'upload-progress error';
+                progress.textContent = `❌ Ошибка: ${e.message}`;
+                showToast('Ошибка загрузки: ' + e.message, 'error');
+            }
+        }
+
+        // ─── Удаление файла ─────────────────────────────────────────
+        async function deleteImage(imageId) {
+            const confirmed = await showModal('Удаление файла', 'Удалить этот файл?');
+            if (!confirmed) return;
+            try {
+                const r = await fetch(`/api/images/${imageId}`, { method: 'DELETE' });
+                const result = await r.json();
+                if (result.status === 'ok') {
+                    showToast('✅ Файл удалён', 'success');
+                    loadTicket();
+                } else {
+                    showToast('Ошибка удаления: ' + (result.error || 'неизвестная ошибка'), 'error');
+                }
+            } catch (e) {
+                showToast('Ошибка удаления: ' + e.message, 'error');
+            }
+        }
+
+        // ─── Lightbox ───────────────────────────────────────────────
+        function openLightbox(index) {
+            const cards = document.querySelectorAll('.image-card');
+            lbImages = [];
+            cards.forEach((card, i) => {
+                const imgEl = card.querySelector('.preview-wrap img');
+                if (imgEl) {
+                    lbImages.push({
+                        src: imgEl.src,
+                        alt: imgEl.alt,
+                        downloadUrl: `/api/images/${card.querySelector('.delete-btn')?.getAttribute('onclick')?.match(/\d+/)?.[0] || ''}/download`
+                    });
+                }
+            });
+
+            if (lbImages.length === 0) return;
+
+            lbCurrentIndex = Math.min(index, lbImages.length - 1);
+            lbZoomed = false;
+            lbScale = 1;
+            lbPosX = 0;
+            lbPosY = 0;
+            renderLightbox();
+        }
+
+        function renderLightbox() {
+            const old = document.querySelector('.lightbox');
+            if (old) old.remove();
+
+            const img = lbImages[lbCurrentIndex];
+            if (!img) return;
+
+            const lb = document.createElement('div');
+            lb.className = 'lightbox';
+            lb.onclick = (e) => {
+                if (e.target === lb) closeLightbox();
+            };
+
+            lb.innerHTML = `
+                <button class="lb-close" onclick="closeLightbox()">✕</button>
+                ${lbImages.length > 1 ? `<button class="lb-nav lb-prev" onclick="navigateLightbox(-1)">‹</button>
+                <button class="lb-nav lb-next" onclick="navigateLightbox(1)">›</button>` : ''}
+                <div class="lb-content" id="lbContent">
+                    <img src="${img.src}" alt="${img.alt}" id="lbImage"
+                        ondblclick="toggleZoom()"
+                        onwheel="handleZoom(event)"
+                        onmousedown="startDrag(event)"
+                        onmousemove="doDrag(event)"
+                        onmouseup="endDrag()"
+                        ontouchstart="startTouchZoom(event)"
+                        ontouchmove="doTouchZoom(event)"
+                        ontouchend="endTouchZoom()">
+                </div>
+                <div class="lb-counter">${lbCurrentIndex + 1} / ${lbImages.length}</div>
+                <div class="lb-toolbar">
+                    <button onclick="toggleZoom()">🔍 ${lbZoomed ? 'Сбросить' : 'Увеличить'}</button>
+                    <button onclick="downloadCurrent()">⬇ Скачать</button>
+                    <button onclick="toggleFullscreen()">⛶ На весь экран</button>
+                </div>
+            `;
+
+            document.body.appendChild(lb);
+            document.addEventListener('keydown', lbKeyHandler);
+        }
+
+        function lbKeyHandler(e) {
+            if (e.key === 'Escape') closeLightbox();
+            if (e.key === 'ArrowLeft') navigateLightbox(-1);
+            if (e.key === 'ArrowRight') navigateLightbox(1);
+            if (e.key === '+' || e.key === '=') toggleZoom();
+            if (e.key === '-') { if (lbZoomed) toggleZoom(); }
+        }
+
+        function navigateLightbox(direction) {
+            lbCurrentIndex = (lbCurrentIndex + direction + lbImages.length) % lbImages.length;
+            lbZoomed = false;
+            lbScale = 1;
+            lbPosX = 0;
+            lbPosY = 0;
+            renderLightbox();
+        }
+
+        function toggleZoom() {
+            const img = document.getElementById('lbImage');
+            if (!img) return;
+            lbZoomed = !lbZoomed;
+            if (lbZoomed) {
+                lbScale = 2;
+                img.style.transform = `scale(${lbScale}) translate(${lbPosX}px, ${lbPosY}px)`;
+                img.classList.add('zoomed');
+            } else {
+                lbScale = 1;
+                lbPosX = 0;
+                lbPosY = 0;
+                img.style.transform = '';
+                img.classList.remove('zoomed');
+            }
+        }
+
+        function handleZoom(event) {
+            if (!lbZoomed) return;
+            event.preventDefault();
+            const img = document.getElementById('lbImage');
+            if (!img) return;
+
+            const delta = event.deltaY > 0 ? -0.1 : 0.1;
+            lbScale = Math.max(1, Math.min(5, lbScale + delta));
+            img.style.transform = `scale(${lbScale}) translate(${lbPosX}px, ${lbPosY}px)`;
+        }
+
+        function startDrag(event) {
+            if (!lbZoomed) return;
+            lbIsDragging = true;
+            lbDragStartX = event.clientX - lbPosX;
+            lbDragStartY = event.clientY - lbPosY;
+        }
+
+        function doDrag(event) {
+            if (!lbIsDragging || !lbZoomed) return;
+            lbPosX = event.clientX - lbDragStartX;
+            lbPosY = event.clientY - lbDragStartY;
+            const img = document.getElementById('lbImage');
+            if (img) {
+                img.style.transform = `scale(${lbScale}) translate(${lbPosX}px, ${lbPosY}px)`;
+            }
+        }
+
+        function endDrag() {
+            lbIsDragging = false;
+        }
+
+        let touchStartDistance = 0;
+        let touchStartScale = 1;
+
+        function startTouchZoom(event) {
+            if (event.touches.length === 2) {
+                touchStartDistance = Math.hypot(
+                    event.touches[0].clientX - event.touches[1].clientX,
+                    event.touches[0].clientY - event.touches[1].clientY
+                );
+                touchStartScale = lbScale;
+            }
+        }
+
+        function doTouchZoom(event) {
+            if (event.touches.length === 2) {
+                event.preventDefault();
+                const dist = Math.hypot(
+                    event.touches[0].clientX - event.touches[1].clientX,
+                    event.touches[0].clientY - event.touches[1].clientY
+                );
+                lbScale = Math.max(1, Math.min(5, touchStartScale * (dist / touchStartDistance)));
+                const img = document.getElementById('lbImage');
+                if (img) {
+                    lbZoomed = lbScale > 1;
+                    img.style.transform = `scale(${lbScale}) translate(${lbPosX}px, ${lbPosY}px)`;
+                    if (lbZoomed) img.classList.add('zoomed');
+                    else img.classList.remove('zoomed');
+                }
+            }
+        }
+
+        function endTouchZoom() {}
+
+        function downloadCurrent() {
+            const img = lbImages[lbCurrentIndex];
+            if (!img) return;
+            const a = document.createElement('a');
+            a.href = img.downloadUrl || img.src;
+            a.download = img.alt || 'file';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        function toggleFullscreen() {
+            const lb = document.querySelector('.lightbox');
+            if (!lb) return;
+            if (!document.fullscreenElement) {
+                lb.requestFullscreen?.() || lb.webkitRequestFullscreen?.();
+            } else {
+                document.exitFullscreen?.() || document.webkitExitFullscreen?.();
+            }
+        }
+
+        function closeLightbox() {
+            const lb = document.querySelector('.lightbox');
+            if (lb) lb.remove();
+            document.removeEventListener('keydown', lbKeyHandler);
+            lbImages = [];
+        }
+
+        // ─── Инициализация drag-and-drop после загрузки ─────────────
+        const origLoadTicket = loadTicket;
+        loadTicket = async function() {
+            await origLoadTicket.call(this);
+            setTimeout(setupDragDrop, 100);
+        };
+    </script>
+</body>
+</html>

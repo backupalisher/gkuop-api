@@ -1,0 +1,35 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
+.venv/
+
+# Environment variables
+.env
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Logs
+*.log
+uvicorn_debug.log
+
+# Uploads
+uploads/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SQL scripts (local fixes)
+database/clean_current_note_footer.sql
+database/fix_last_updated_date.sql
