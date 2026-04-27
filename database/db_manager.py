@@ -1,11 +1,12 @@
 """
 Менеджер базы данных
 """
+import logging
 import psycopg2
 from psycopg2.extras import RealDictCursor
+from psycopg2.sql import SQL, Identifier
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-from contextlib import contextmanager
 from .models import Ticket, TicketComment, TicketHistoryRecord, TicketImage
 
 
@@ -266,8 +267,6 @@ class DatabaseManager:
                                Если None — не обновляет поле last_updated_date.
         """
         try:
-            from psycopg2.sql import SQL, Identifier
-
             # Формируем SET-выражение
             set_parts = [SQL("{} = %s").format(Identifier(key)) for key in updates.keys()]
 
@@ -445,6 +444,94 @@ class DatabaseManager:
         stats = self.cursor.fetchone()
         return dict(stats)
 
+    def archive_old_tickets(self, before_date: datetime) -> Dict[str, Any]:
+        """
+        Массовая архивация заявок, созданных до указанной даты (включительно).
+
+        Архивируются все заявки, у которых first_received_date < before_date
+        (на следующий день после before_date), за исключением уже архивированных.
+
+        Все связанные данные (комментарии, вложения, история) сохраняются
+        благодаря внешним ключам с CASCADE.
+
+        Операция выполняется в одной транзакции с возможностью отката при сбое.
+
+        Args:
+            before_date: Дата, до которой заявки архивируются (включительно).
+                         Заявки с first_received_date <= before_date будут архивированы.
+
+        Returns:
+            Dict с ключами:
+                - success: bool
+                - archived_count: int
+                - archived_tickets: list[str] — номера заархивированных заявок
+                - error: Optional[str]
+        """
+        result = {
+            'success': False,
+            'archived_count': 0,
+            'archived_tickets': [],
+            'error': None
+        }
+        try:
+            # Начинаем транзакцию
+            self.connection.commit()  # завершаем предыдущую, если была
+            old_autocommit = self.connection.autocommit
+            self.connection.set_session(autocommit=False)
+
+            # Выбираем заявки для архивации:
+            # - first_received_date <= before_date (включительно)
+            # - не архивированные (is_archived IS NULL OR is_archived = FALSE)
+            self.cursor.execute(
+                """SELECT ticket_number, first_received_date
+                   FROM tickets
+                   WHERE (is_archived IS NULL OR is_archived = FALSE)
+                     AND first_received_date <= %s
+                   ORDER BY ticket_number""",
+                (before_date,)
+            )
+            rows = self.cursor.fetchall()
+            tickets_to_archive = [dict(r) for r in rows]
+
+            if not tickets_to_archive:
+                self.connection.commit()
+                self.connection.set_session(autocommit=old_autocommit)
+                result['success'] = True
+                return result
+
+            ticket_numbers = [t['ticket_number'] for t in tickets_to_archive]
+
+            # Архивируем: устанавливаем is_archived = TRUE
+            # Не перезаписываем last_updated_date — дата последнего письма
+            # должна сохраняться даже при массовой архивации
+            self.cursor.execute(
+                """UPDATE tickets
+                   SET is_archived = TRUE
+                   WHERE ticket_number = ANY(%s)""",
+                (ticket_numbers,)
+            )
+
+            # Фиксируем транзакцию
+            self.connection.commit()
+            self.connection.set_session(autocommit=old_autocommit)
+
+            result['success'] = True
+            result['archived_count'] = len(ticket_numbers)
+            result['archived_tickets'] = ticket_numbers
+
+            return result
+
+        except Exception as e:
+            # Откат транзакции при сбое
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            error_msg = str(e)
+            print(f"Ошибка массовой архивации: {error_msg}")
+            result['error'] = error_msg
+            return result
+
     def clear_all_data(self) -> bool:
         """Очистка всех данных (для перезагрузки) — удаляем и пересоздаём таблицы"""
         try:
@@ -470,7 +557,6 @@ class DatabaseManager:
         4. Верификация целостности после очистки
         Возвращает словарь с результатами каждого шага.
         """
-        import logging
         logger = logging.getLogger(__name__)
         result = {'steps': [], 'success': True, 'error': None}
 
@@ -503,7 +589,9 @@ class DatabaseManager:
 
             # Шаг 4: Сброс всех sequences
             for seq in sequences:
-                self.cursor.execute(f"ALTER SEQUENCE IF EXISTS {seq} RESTART WITH 1")
+                self.cursor.execute(
+                    SQL("ALTER SEQUENCE IF EXISTS {} RESTART WITH 1").format(Identifier(seq))
+                )
             log_step("Сброс sequences", "OK", f"Сброшено: {len(sequences)}")
 
             # Шаг 5: Пересоздаём таблицы
@@ -522,7 +610,9 @@ class DatabaseManager:
 
             # Проверяем, что таблицы пусты
             for table in ['tickets', 'ticket_comments', 'ticket_history']:
-                self.cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
+                self.cursor.execute(
+                    SQL("SELECT COUNT(*) as cnt FROM {}").format(Identifier(table))
+                )
                 cnt = self.cursor.fetchone()['cnt']
                 if cnt != 0:
                     raise Exception(f"Таблица {table} не пуста: {cnt} записей")
@@ -556,7 +646,9 @@ class DatabaseManager:
         try:
             # Проверка 1: Количество записей в каждой таблице
             for table in ['tickets', 'ticket_comments', 'ticket_history']:
-                self.cursor.execute(f"SELECT COUNT(*) as cnt FROM {table}")
+                self.cursor.execute(
+                    SQL("SELECT COUNT(*) as cnt FROM {}").format(Identifier(table))
+                )
                 cnt = self.cursor.fetchone()['cnt']
                 result['summary'][table] = cnt
                 result['checks'].append({

@@ -23,6 +23,16 @@
     <script>
         const ticketNumber = '{{ ticket_number }}';
 
+        // ─── Навигация назад к списку ───────────────────────
+        function goBackToList() {
+            // Пытаемся вернуться через history API, если есть сохранённое состояние
+            if (document.referrer && document.referrer.includes(window.location.origin)) {
+                history.back();
+            } else {
+                window.location.href = '/';
+            }
+        }
+
         // ─── Toast-уведомления ──────────────────────────────
         function showToast(message, type = 'info', duration = 4000) {
             const container = document.getElementById('toastContainer');
@@ -194,7 +204,9 @@
                 // Кнопки действий
                 const isArchived = t.is_archived === true;
                 html += `<div class="action-buttons">`;
-                html += `<a href="/" class="btn-action btn-back">← Назад к списку</a>`;
+                // При возврате к списку используем history.back() если есть сохранённое состояние,
+                // иначе переходим на главную. Это позволяет восстановить позицию прокрутки и фильтры.
+                html += `<a href="/" class="btn-action btn-back" onclick="event.preventDefault(); goBackToList()">← Назад к списку</a>`;
                 html += `<span style="flex:1"></span>`;
                 if (!isArchived) {
                     html += `<button class="btn-action btn-complete" onclick="completeTicket()">✓ Выполнено</button>`;

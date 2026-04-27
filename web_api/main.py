@@ -14,11 +14,13 @@ logger = logging.getLogger(__name__)
 # Добавляем корень проекта в sys.path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from fastapi import FastAPI, Request, Query, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, Request, Query, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from dotenv import load_dotenv
+
+from psycopg2.sql import SQL, Identifier
 
 from database.db_manager import DatabaseManager
 from database.models import TicketImage
@@ -158,16 +160,17 @@ async def api_get_tickets(
 
         # Данные
         offset = (page - 1) * per_page
-        data_query = f"""
+        sort_column = Identifier(sort_by)
+        data_query = SQL("""
             SELECT t.*,
                    CASE WHEN EXISTS (
                        SELECT 1 FROM ticket_images ti
                        WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE
                    ) THEN TRUE ELSE FALSE END AS has_files
-            FROM tickets t {where_sql}
-            ORDER BY t.{sort_by} {sort_order}
-            LIMIT %s OFFSET %s
-        """
+            FROM tickets t
+        """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
+            sort_column, SQL(sort_order)
+        )
         db.cursor.execute(data_query, params + [per_page, offset])
         rows = db.cursor.fetchall()
 
@@ -264,7 +267,9 @@ async def api_update_ticket(ticket_number: str, request: Request):
         db.save_history_record(history_record)
 
         # 5. Обновляем тикет
-        db.update_ticket(ticket_number, changed_fields, last_updated_date=datetime.now())
+        # Не передаём last_updated_date — дата последнего письма не должна
+        # перезаписываться при ручном редактировании заявки
+        db.update_ticket(ticket_number, changed_fields)
 
         # 6. Возвращаем обновлённый тикет
         updated_ticket = db.get_ticket(ticket_number)
@@ -291,7 +296,7 @@ async def api_complete_ticket(ticket_number: str, request: Request):
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
-        changed_fields = {"status": "Выполнено"}
+        changed_fields = {"status": "Выполнено", "is_archived": False}
         now = datetime.now()
 
         # Сохраняем в историю
@@ -323,7 +328,9 @@ async def api_complete_ticket(ticket_number: str, request: Request):
             tech_conclusion=existing_ticket.get('tech_conclusion'),
         )
         db.save_history_record(history_record)
-        db.update_ticket(ticket_number, changed_fields, last_updated_date=now)
+        # Не передаём last_updated_date — дата последнего письма не должна
+        # перезаписываться при ручном изменении статуса на "Выполнено"
+        db.update_ticket(ticket_number, changed_fields)
 
         # Обрабатываем опциональные файлы, если они есть
         uploaded_images = []
@@ -372,7 +379,7 @@ async def api_archive_ticket(ticket_number: str):
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
         db.cursor.execute(
-            "UPDATE tickets SET is_archived = TRUE WHERE ticket_number = %s",
+            "UPDATE tickets SET is_archived = TRUE, status = 'В архив' WHERE ticket_number = %s",
             (ticket_number,)
         )
         db.connection.commit()
@@ -394,9 +401,15 @@ async def api_restore_ticket(ticket_number: str):
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
+        # При восстановлении сбрасываем флаг архива и убираем статус "В архив",
+        # но сохраняем другие статусы (например, "Выполнено")
+        new_status = existing_ticket.get('status')
+        if new_status == 'В архив':
+            new_status = None
+
         db.cursor.execute(
-            "UPDATE tickets SET is_archived = FALSE WHERE ticket_number = %s",
-            (ticket_number,)
+            "UPDATE tickets SET is_archived = FALSE, status = %s WHERE ticket_number = %s",
+            (new_status, ticket_number)
         )
         db.connection.commit()
 
@@ -655,15 +668,33 @@ async def api_get_statuses():
 
 
 @app.post("/api/rebuild")
-def api_rebuild():
-    """Полная перезагрузка: очистка БД и переобработка всех писем"""
+async def api_rebuild():
+    """Обновление данных: переобработка всех писем из почты с сохранением пользовательских статусов"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
 
     try:
         config = load_config()
 
-        # Шаг 1: Комплексная очистка БД через full_cleanup()
+        # Шаг 1: Сохраняем пользовательские статусы и флаги существующих заявок
+        # (статусы «Выполнено», «В архив» и т.д., установленные вручную)
+        saved_statuses = {}
+        try:
+            db.cursor.execute(
+                "SELECT ticket_number, status, is_archived, is_active FROM tickets"
+            )
+            for row in db.cursor.fetchall():
+                saved_statuses[row['ticket_number']] = {
+                    'status': row['status'],
+                    'is_archived': row['is_archived'],
+                    'is_active': row['is_active'],
+                }
+            logger.info(f"Сохранено статусов для {len(saved_statuses)} существующих заявок")
+        except Exception:
+            # Таблицы может ещё не существовать — это нормально для первого запуска
+            pass
+
+        # Шаг 2: Комплексная очистка БД через full_cleanup()
         cleanup_result = db.full_cleanup()
         if not cleanup_result['success']:
             return JSONResponse({
@@ -726,7 +757,26 @@ def api_rebuild():
 
         email_client.close()
 
-        # Шаг 2: Верификация целостности после загрузки
+        # Шаг 3: Восстанавливаем сохранённые пользовательские статусы
+        restored_count = 0
+        for ticket_number, saved in saved_statuses.items():
+            updates = {}
+            if saved.get('status'):
+                updates['status'] = saved['status']
+            if saved.get('is_archived') is not None:
+                updates['is_archived'] = saved['is_archived']
+            if saved.get('is_active') is not None:
+                updates['is_active'] = saved['is_active']
+
+            if updates:
+                # Проверяем, что заявка существует после переобработки
+                if db.ticket_exists(ticket_number):
+                    db.update_ticket(ticket_number, updates)
+                    restored_count += 1
+
+        logger.info(f"Восстановлено статусов для {restored_count} заявок")
+
+        # Шаг 4: Верификация целостности после загрузки
         integrity_result = db.verify_data_integrity()
 
         return {
@@ -735,7 +785,8 @@ def api_rebuild():
             "processed": processed,
             "errors": errors,
             "cleanup_result": cleanup_result,
-            "integrity_result": integrity_result
+            "integrity_result": integrity_result,
+            "statuses_restored": restored_count
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)

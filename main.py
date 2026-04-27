@@ -1,7 +1,6 @@
 """
 Главный модуль приложения
 """
-import os
 import sys
 from datetime import datetime
 from dotenv import load_dotenv
@@ -132,12 +131,13 @@ class EmailParserApplication:
         print(f"{'='*60}")
 
         for i, event in enumerate(history, 1):
-            print(f"\n{i}. Дата: {event['date']}")
-            print(f"   Комментарий: {event['comment']}")
-            if event['status_before'] != event['status_after']:
-                print(f"   Статус: {event['status_before']} → {event['status_after']}")
-            if event['changes']:
-                print(f"   Изменения: {event['changes']}")
+            print(f"\n{i}. Дата: {event.get('date', 'N/A')}")
+            print(f"   Комментарий: {event.get('comment', 'N/A')}")
+            if event.get('status_before') != event.get('status_after'):
+                print(f"   Статус: {event.get('status_before', '—')} → {event.get('status_after', '—')}")
+            changes = event.get('changes') or event.get('changed_fields')
+            if changes:
+                print(f"   Изменения: {changes}")
 
         print(f"{'='*60}\n")
 

@@ -216,8 +216,6 @@ class ImageManager:
             # Конвертируем в RGB если нужно
             if img.mode in ('RGBA', 'P'):
                 img = img.convert('RGB')
-            elif img.mode == 'P':
-                img = img.convert('RGB')
             img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
             img.save(thumb_path, 'PNG', quality=85)
 

@@ -3,7 +3,7 @@
 """
 from dataclasses import dataclass, asdict
 from datetime import datetime
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any
 from psycopg2.extras import Json
 
 
@@ -31,8 +31,8 @@ class Ticket:
     work_done: Optional[str] = None
     tech_conclusion: Optional[str] = None
     soglasovano_line: Optional[str] = None
-    first_received_date: datetime = None
-    last_updated_date: datetime = None
+    first_received_date: Optional[datetime] = None
+    last_updated_date: Optional[datetime] = None
     email_hash: Optional[str] = None
     is_active: bool = True
 
@@ -170,7 +170,7 @@ class TicketHistoryRecord:
             self.fault_description,
             self.work_done,
             self.tech_conclusion,
-            self.soglasovano_line,
+            self.soglasovano_line
         )
 
 
@@ -183,7 +183,7 @@ class TicketImage:
     mime_type: str
     file_size: int
     thumbnail_path: Optional[str] = None
-    uploaded_at: datetime = None
+    uploaded_at: Optional[datetime] = None
     is_deleted: bool = False
 
     def to_dict(self) -> Dict:

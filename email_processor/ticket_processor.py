@@ -57,9 +57,18 @@ class TicketProcessor:
     # Поля, которые фиксируются при первом появлении и не перезаписываются пустыми значениями
     IMMUTABLE_FIELDS = ['inventory_number', 'printer_model']
 
+    # Статусы, которые нельзя перезаписывать при обновлении из почты
+    PROTECTED_STATUSES = {'Выполнено', 'В архив'}
+
     def get_changed_fields(self, existing_ticket: Dict, new_data: Dict) -> Dict:
         """Определение измененных полей"""
         changed = {}
+
+        # Защита: если у заявки уже стоит "Выполнено" или "В архив" — не перезаписываем статус
+        existing_status = (existing_ticket.get('status', '') or '').strip()
+        if existing_status in self.PROTECTED_STATUSES:
+            # Не обновляем статус, но остальные поля можно обновлять
+            pass
 
         for field in self.TRACKED_FIELDS:
             old_value = existing_ticket.get(field, '') or ''
@@ -71,6 +80,10 @@ class TicketProcessor:
 
             # Для immutable-полей: если значение уже есть в БД, не перезаписываем даже если пришло другое
             if field in self.IMMUTABLE_FIELDS and old_value:
+                continue
+
+            # Защита статусов "Выполнено" и "В архив" от перезаписи
+            if field == 'status' and existing_status in self.PROTECTED_STATUSES:
                 continue
 
             if old_value != new_value and new_value:
@@ -116,6 +129,9 @@ class TicketProcessor:
         """
         changed = {}
 
+        # Защита: если у заявки уже стоит "Выполнено" или "В архив" — не перезаписываем статус
+        existing_status = (existing_ticket.get('status', '') or '').strip() if existing_ticket else ''
+
         # Поля, которые отслеживаем в истории
         tracked_history_fields = [
             'status', 'priority', 'assigned_to', 'current_note', 'office', 'cabinet',
@@ -144,6 +160,10 @@ class TicketProcessor:
 
             # Для immutable-полей: если значение уже есть в БД, не перезаписываем
             if field in self.IMMUTABLE_FIELDS and field in seen_immutable:
+                continue
+
+            # Защита статусов "Выполнено" и "В архив" от перезаписи
+            if field == 'status' and existing_status in self.PROTECTED_STATUSES:
                 continue
 
             # Нормализуем для сравнения
@@ -262,7 +282,10 @@ class TicketProcessor:
             # Обновляем все изменившиеся поля в тикете
             if changed_fields or old_status != new_status:
                 update_data = dict(changed_fields)
-                if old_status != new_status and 'status' not in update_data:
+                # Защита: не перезаписываем статусы "Выполнено" и "В архив"
+                if old_status in self.PROTECTED_STATUSES:
+                    update_data.pop('status', None)
+                elif old_status != new_status and 'status' not in update_data:
                     update_data['status'] = new_status
                 if update_data:
                     # Передаём received_date из письма как last_updated_date,

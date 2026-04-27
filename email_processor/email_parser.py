@@ -13,7 +13,7 @@ from bs4 import BeautifulSoup
 class EmailParser:
     """Парсер содержимого писем"""
 
-    def __init__(self, patterns: Dict, subject_filters: list = None):
+    def __init__(self, patterns: Dict, subject_filters: Optional[list] = None):
         self.patterns = patterns
         self.subject_filters = subject_filters or ['Оборудование и комплектующие']
 

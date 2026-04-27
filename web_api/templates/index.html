@@ -73,6 +73,72 @@
     </div>
 
     <script>
+        // ─── Состояние списка ───────────────────────────────
+        const LIST_STATE_KEY = 'gkuop_list_state';
+
+        function saveListState() {
+            const state = {
+                page: currentPage,
+                sort: currentSort,
+                order: currentOrder,
+                tab: currentTab,
+                search: document.getElementById('searchInput').value,
+                status: document.getElementById('statusFilter').value,
+                scrollY: window.scrollY,
+                timestamp: Date.now()
+            };
+            try {
+                sessionStorage.setItem(LIST_STATE_KEY, JSON.stringify(state));
+            } catch (e) { /* ignore */ }
+        }
+
+        function restoreListState() {
+            try {
+                const raw = sessionStorage.getItem(LIST_STATE_KEY);
+                if (!raw) return null;
+                const state = JSON.parse(raw);
+                // Проверяем, что состояние не старше 5 минут
+                if (Date.now() - state.timestamp > 5 * 60 * 1000) {
+                    sessionStorage.removeItem(LIST_STATE_KEY);
+                    return null;
+                }
+                return state;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function applyListState(state) {
+            if (!state) return;
+            currentPage = state.page || 1;
+            currentSort = state.sort || 'last_updated_date';
+            currentOrder = state.order || 'desc';
+            currentTab = state.tab || 'active';
+            if (state.search) document.getElementById('searchInput').value = state.search;
+            if (state.status) document.getElementById('statusFilter').value = state.status;
+
+            // Восстанавливаем активный таб
+            document.getElementById('tabActive').classList.toggle('active', currentTab === 'active');
+            document.getElementById('tabArchived').classList.toggle('active', currentTab === 'archived');
+
+            // Восстанавливаем стрелки сортировки
+            document.querySelectorAll('th .arrow').forEach(a => a.textContent = '');
+            const arrow = document.getElementById('arr-' + currentSort);
+            if (arrow) arrow.textContent = currentOrder === 'asc' ? '▲' : '▼';
+
+            // Загружаем тикеты и после загрузки восстанавливаем прокрутку
+            loadTickets().then(() => {
+                if (state.scrollY > 0) {
+                    requestAnimationFrame(() => {
+                        window.scrollTo(0, state.scrollY);
+                    });
+                }
+            });
+
+            // Очищаем сохранённое состояние после применения
+            sessionStorage.removeItem(LIST_STATE_KEY);
+        }
+
         let currentPage = 1;
         let currentSort = 'last_updated_date';
         let currentOrder = 'desc';
@@ -219,7 +285,7 @@
                 } else {
                     tbody.innerHTML = data.tickets.map((t, idx) => `
                         <tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
-                            <td data-label="№ заявки"><a href="/tickets/${t.ticket_number}" class="ticket-link">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
+                            <td data-label="№ заявки"><a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}</span></td>
                             <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
                             <td data-label="Кабинет">${t.cabinet ? t.office + ' / ' + t.cabinet : (t.office || '—')}</td>
@@ -334,7 +400,14 @@
         // Инициализация
         loadTabCounts();
         loadStatuses();
-        loadTickets();
+
+        // Пытаемся восстановить состояние списка при возврате с детальной страницы
+        const savedState = restoreListState();
+        if (savedState) {
+            applyListState(savedState);
+        } else {
+            loadTickets();
+        }
     </script>
 </body>
 </html>

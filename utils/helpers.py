@@ -2,7 +2,7 @@
 Вспомогательные функции
 """
 import sys
-from typing import List, Dict
+from typing import Dict
 from datetime import datetime, timedelta
 
 def format_ticket_info(ticket: Dict) -> str:

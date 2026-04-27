@@ -492,10 +492,13 @@ td {
 }
 
 tr {
-  transition: background var(--transition-fast);
+  transition: background var(--transition-base);
 }
 
-tr:hover td { background: var(--color-surface-hover); }
+tr:hover td {
+  background: #b1cbfd;
+  transition: background var(--transition-base);
+}
 
 /* Анимация появления строк */
 @keyframes rowFadeIn {
@@ -524,7 +527,7 @@ tr:hover td { background: var(--color-surface-hover); }
 }
 
 .table-wrap tbody tr:hover {
-  background-color: #eef3ff !important;
+  background-color: #d0e2ff !important;
 }
 
 /* Иконка скрепки (paperclip) рядом с номером заявки */
@@ -1370,7 +1373,7 @@ tr:hover td { background: var(--color-surface-hover); }
     padding-left: env(safe-area-inset-left, 0px);
     padding-right: env(safe-area-inset-right, 0px);
     min-height: 100vh;
-    min-height: -webkit-fill-available;
+    min-height: 100dvh;
   }
 
   .header {
@@ -1458,6 +1461,10 @@ tr:hover td { background: var(--color-surface-hover); }
     padding: var(--space-3) var(--space-4);
     position: relative;
     animation: none;
+  }
+
+  .table-wrap tbody tr:hover {
+    background-color: #d0e2ff;
   }
 
   .table-wrap tbody tr:hover td {

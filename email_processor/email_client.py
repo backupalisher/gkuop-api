@@ -5,7 +5,7 @@ import imaplib
 import email
 from email.message import Message
 from email.header import decode_header
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from datetime import datetime
 import codecs
 
@@ -60,8 +60,8 @@ class EmailClient:
             print(f"✗ Ошибка выбора папки {folder}: {e}")
             return False
 
-    def search_emails(self, subject_filters: list = None, since_date: datetime = None,
-                      from_filter: str = None) -> List[bytes]:
+    def search_emails(self, subject_filters: Optional[list] = None, since_date: Optional[datetime] = None,
+                      from_filter: Optional[str] = None) -> List[bytes]:
         """Поиск писем по критериям"""
         criteria_parts = []
 
