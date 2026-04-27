@@ -12,6 +12,7 @@ from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from utils.logger import logger
 from utils.helpers import print_statistics, confirm_action, exit_with_error
+from utils.incremental_updater import IncrementalUpdater
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -25,6 +26,7 @@ class EmailParserApplication:
         self.email_client = None
         self.email_parser = None
         self.ticket_processor = None
+        self.incremental_updater = IncrementalUpdater()
 
     def initialize(self) -> bool:
         """Инициализация всех компонентов"""
@@ -68,9 +70,25 @@ class EmailParserApplication:
         logger.info("Приложение успешно инициализировано")
         return True
 
-    def process_emails(self, limit: int = None, since_date: datetime = None):
-        """Обработка писем"""
+    def process_emails(self, limit: int = None, since_date: datetime = None,
+                       update_timestamp: bool = False):
+        """Обработка писем
+
+        Args:
+            limit: максимальное количество писем для обработки
+            since_date: дата начала поиска (если None — используется
+                        инкрементальный механизм из IncrementalUpdater)
+            update_timestamp: если True — после успешной обработки сохраняет
+                              временную метку в last_update.txt
+        """
         logger.info("Начало обработки писем...")
+
+        # Если дата не передана — используем инкрементальный механизм
+        if since_date is None:
+            search_from, search_to = self.incremental_updater.get_update_range()
+            since_date = search_from
+            logger.info(f"Инкрементальное обновление: "
+                        f"{self.incremental_updater.format_range(search_from, search_to)}")
 
         # Поиск писем
         email_ids = self.email_client.search_emails(
@@ -81,6 +99,9 @@ class EmailParserApplication:
 
         if not email_ids:
             logger.info("Нет новых писем для обработки")
+            # Даже если писем нет, обновляем timestamp (обновление успешно выполнено)
+            if update_timestamp:
+                self.incremental_updater.save_update_date()
             return
 
         # Ограничение количества
@@ -118,6 +139,13 @@ class EmailParserApplication:
         stats = self.db_manager.get_statistics()
         print_statistics(stats)
 
+        # Сохраняем временную метку ТОЛЬКО если не было ошибок
+        if update_timestamp and errors == 0:
+            self.incremental_updater.save_update_date()
+            logger.info(f"Временная метка обновления сохранена")
+        elif update_timestamp and errors > 0:
+            logger.warning(f"Были ошибки ({errors}), временная метка НЕ обновлена")
+
     def show_ticket_history(self, ticket_number: str):
         """Показать историю заявки"""
         history = self.db_manager.get_ticket_history(ticket_number)
@@ -142,26 +170,31 @@ class EmailParserApplication:
         print(f"{'='*60}\n")
 
     def rebuild_database(self):
-        """Обработка всех писем из почты (без фильтра по дате)"""
+        """Полная перезагрузка БД — сброс timestamp и обработка всех писем"""
         if not self.initialize():
             exit_with_error("Не удалось инициализировать приложение")
 
         try:
+            # Сбрасываем timestamp на начальную дату
+            self.incremental_updater.reset()
+            logger.info("Временная метка сброшена на 01.01.2025 00:00:00")
+
             limit = self.config['parser'].max_emails_per_run
-            self.process_emails(limit=limit)
+            # Запускаем без since_date — будет использован сброшенный timestamp
+            self.process_emails(limit=limit, update_timestamp=True)
         finally:
             self.close()
 
     def run_once(self):
-        """Однократный запуск"""
+        """Однократный запуск с инкрементальным обновлением"""
         if not self.initialize():
             exit_with_error("Не удалось инициализировать приложение")
 
         try:
             limit = self.config['parser'].max_emails_per_run
-            # Ищем письма с 1 апреля 2026
-            since_date = datetime(2026, 4, 1)
-            self.process_emails(limit=limit, since_date=since_date)
+            # Используем инкрементальный механизм (since_date=None)
+            # и сохраняем timestamp после успешной обработки
+            self.process_emails(limit=limit, update_timestamp=True)
         finally:
             self.close()
 
@@ -184,7 +217,8 @@ class EmailParserApplication:
             if choice == '1':
                 limit = input("Введите лимит писем (Enter для всех): ").strip()
                 limit = int(limit) if limit else self.config['parser'].max_emails_per_run
-                self.process_emails(limit=limit)
+                # Инкрементальное обновление с сохранением timestamp
+                self.process_emails(limit=limit, update_timestamp=True)
 
             elif choice == '2':
                 stats = self.db_manager.get_statistics()
