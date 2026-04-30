@@ -78,6 +78,23 @@ if os.path.isdir(static_dir):
 # ─── API эндпоинты ────────────────────────────────────────────────
 
 
+@app.post("/api/auth/login")
+async def api_login(request: Request):
+    """Аутентификация по предварительно известному аккаунту"""
+    try:
+        body = await request.json()
+        login = body.get("login", "").strip()
+        password = body.get("password", "").strip()
+        if login == "admin" and password == "admin123":
+            return {"status": "ok", "username": login}
+        return JSONResponse(
+            {"status": "error", "message": "Неверный логин или пароль"},
+            status_code=401
+        )
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 @app.get("/api/tickets")
 async def api_get_tickets(
     page: int = Query(1, ge=1),

@@ -7,8 +7,19 @@
     <link rel="stylesheet" href="/static/css/main.css">
 </head>
 <body>
+    <!-- Оверлей авторизации -->
+    <div class="auth-overlay" id="authOverlay">
+        <form class="auth-form" id="authForm" onsubmit="return handleLogin(event)">
+            <input type="text" class="auth-input" id="authLogin" placeholder="Логин" autocomplete="off" />
+            <input type="password" class="auth-input" id="authPassword" placeholder="Пароль" autocomplete="off" />
+            <button type="submit" class="auth-btn">Войти</button>
+            <div class="auth-error" id="authError"></div>
+        </form>
+    </div>
+
     <div class="header">
         <h1>Заявка #{{ ticket_number }}</h1>
+        <div id="authIndicator" class="header-actions" style="display:none"></div>
     </div>
 
     <div class="container">
@@ -22,6 +33,86 @@
 
     <script>
         const ticketNumber = '{{ ticket_number }}';
+
+        // ─── Аутентификация ───────────────────────────────────
+        const AUTH_KEY = 'gkuop_auth';
+
+        function getAuth() {
+            try {
+                const raw = sessionStorage.getItem(AUTH_KEY);
+                if (!raw) return null;
+                const data = JSON.parse(raw);
+                if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
+                    sessionStorage.removeItem(AUTH_KEY);
+                    return null;
+                }
+                return data;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        function setAuth(username) {
+            sessionStorage.setItem(AUTH_KEY, JSON.stringify({
+                username: username,
+                timestamp: Date.now()
+            }));
+        }
+
+        function clearAuth() {
+            sessionStorage.removeItem(AUTH_KEY);
+        }
+
+        async function handleLogin(event) {
+            event.preventDefault();
+            const login = document.getElementById('authLogin').value.trim();
+            const password = document.getElementById('authPassword').value.trim();
+            const errorEl = document.getElementById('authError');
+
+            try {
+                const r = await fetch('/api/auth/login', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({login, password})
+                });
+                const data = await r.json();
+                if (data.status === 'ok') {
+                    setAuth(data.username);
+                    showApp();
+                    errorEl.textContent = '';
+                } else {
+                    errorEl.textContent = data.message || 'Неверный логин или пароль';
+                }
+            } catch (e) {
+                errorEl.textContent = 'Ошибка соединения с сервером';
+            }
+            return false;
+        }
+
+        function handleLogout() {
+            clearAuth();
+            document.getElementById('authOverlay').style.display = 'flex';
+            document.getElementById('authIndicator').style.display = 'none';
+            document.getElementById('authLogin').value = '';
+            document.getElementById('authPassword').value = '';
+            document.getElementById('authError').textContent = '';
+        }
+
+        function showApp() {
+            document.getElementById('authOverlay').style.display = 'none';
+            const indicator = document.getElementById('authIndicator');
+            const auth = getAuth();
+            if (auth) {
+                indicator.style.display = 'flex';
+                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>Logged in as ' + auth.username + '<button class="auth-logout" onclick="handleLogout()">Выйти</button></span>';
+            }
+        }
+
+        // Проверяем авторизацию при загрузке
+        const auth = getAuth();
+        if (auth) {
+            showApp();
+        }
 
         // ─── Навигация назад к списку ───────────────────────
         function goBackToList() {

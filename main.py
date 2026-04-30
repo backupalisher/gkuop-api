@@ -139,12 +139,14 @@ class EmailParserApplication:
         stats = self.db_manager.get_statistics()
         print_statistics(stats)
 
-        # Сохраняем временную метку ТОЛЬКО если не было ошибок
-        if update_timestamp and errors == 0:
+        # Сохраняем временную метку после обработки (даже если были ошибки,
+        # т.к. письма уже прочитаны с IMAP-сервера и при следующем запуске
+        # могут не попасть в выборку SINCE)
+        if update_timestamp:
+            if errors > 0:
+                logger.warning(f"Были ошибки ({errors}), но временная метка будет сохранена")
             self.incremental_updater.save_update_date()
             logger.info(f"Временная метка обновления сохранена")
-        elif update_timestamp and errors > 0:
-            logger.warning(f"Были ошибки ({errors}), временная метка НЕ обновлена")
 
     def show_ticket_history(self, ticket_number: str):
         """Показать историю заявки"""
