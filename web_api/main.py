@@ -81,12 +81,27 @@ if os.path.isdir(static_dir):
 
 @app.post("/api/auth/login")
 async def api_login(request: Request):
-    """Аутентификация по предварительно известному аккаунту"""
+    """Аутентификация по хешированным учётным данным из переменных окружения"""
     try:
         body = await request.json()
         login = body.get("login", "").strip()
         password = body.get("password", "").strip()
-        if login == "admin" and password == "admin123":
+
+        login_hash_expected = os.getenv("WEB_USER_HASH")
+        password_hash_expected = os.getenv("WEB_PASSWORD_HASH")
+        if not login_hash_expected or not password_hash_expected:
+            logger.critical("WEB_USER_HASH или WEB_PASSWORD_HASH не заданы в .env")
+            return JSONResponse(
+                {"status": "error", "message": "Ошибка конфигурации сервера"},
+                status_code=500
+            )
+
+        # Хешируем введённые данные и сравниваем
+        import hashlib
+        login_hash = hashlib.sha256(login.encode()).hexdigest()
+        password_hash = hashlib.sha256(password.encode()).hexdigest()
+
+        if login_hash == login_hash_expected and password_hash == password_hash_expected:
             return {"status": "ok", "username": login}
         return JSONResponse(
             {"status": "error", "message": "Неверный логин или пароль"},
