@@ -33,3 +33,8 @@ Thumbs.db
 # SQL scripts (local fixes)
 database/clean_current_note_footer.sql
 database/fix_last_updated_date.sql
+
+# Runtime files
+.gkuop_web.pid
+.gkuop_web.log
+last_update.txt

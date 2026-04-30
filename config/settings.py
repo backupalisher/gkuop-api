@@ -14,6 +14,10 @@ class EmailConfig:
     password: str
     port: int = 993
     folder: str = 'INBOX'
+    rebuild_folders: List[tuple] = field(default_factory=lambda: [
+        ('INBOX', False),
+        ('archive', True),
+    ])
 
     @classmethod
     def from_env(cls):
