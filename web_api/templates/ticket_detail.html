@@ -391,10 +391,6 @@
                             <div class="value">${s.cabinet || '—'}</div>
                         </div>
                         <div class="info-item">
-                            <div class="label">Автор</div>
-                            <div class="value">${s.author_name || '—'}</div>
-                        </div>
-                        <div class="info-item">
                             <div class="label">Подразделение</div>
                             <div class="value">${s.department || '—'}</div>
                         </div>
@@ -404,14 +400,6 @@
                         </div>
                     </div>
                 </div>`;
-
-                // Тема письма
-                if (s.subject) {
-                    html += `<div class="card">
-                        <h2>Тема письма</h2>
-                        <div style="font-size: var(--font-size-base);">${s.subject}</div>
-                    </div>`;
-                }
 
                 // Изображения и документы
                 const images = data.images || [];
@@ -492,9 +480,10 @@
 
                         html += `</div>`;
 
+                        const skipFields = ['assigned_to', 'contact_phone', 'author_name', 'position', 'subject'];
                         if (isSnapshot) {
                             const changes = h.changed_fields || {};
-                            const changeEntries = Object.entries(changes).filter(([k, v]) => v);
+                            const changeEntries = Object.entries(changes).filter(([k, v]) => v && !skipFields.includes(k));
                             if (changeEntries.length > 0) {
                                 html += `<div class="changes">`;
                                 for (const [key, val] of changeEntries) {
@@ -517,6 +506,7 @@
                             if (h.changes && typeof h.changes === 'object') {
                                 html += `<div class="changes">`;
                                 for (const [key, val] of Object.entries(h.changes)) {
+                                    if (skipFields.includes(key)) continue;
                                     html += `<span class="change-tag">${fieldLabel(key)}: ${val}</span>`;
                                 }
                                 html += `</div>`;

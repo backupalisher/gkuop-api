@@ -227,6 +227,29 @@ async def api_get_ticket(ticket_number: str):
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
         history = db.get_ticket_history(ticket_number)
+        # Фильтруем уже сохранённые changed_fields — удаляем поля, исключённые из отображения
+        _history_excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+        # Метки полей, которые могут встречаться в comment_text
+        _excluded_labels = ['Назначена', 'Телефон', 'Автор', 'Должность', 'Тема']
+        for h in history:
+            cf = h.get('changed_fields')
+            if cf and isinstance(cf, dict):
+                h['changed_fields'] = {k: v for k, v in cf.items() if k not in _history_excluded}
+            changes = h.get('changes')
+            if changes and isinstance(changes, dict):
+                h['changes'] = {k: v for k, v in changes.items() if k not in _history_excluded}
+            # Очищаем comment_text от упоминаний исключённых полей (например, "Назначена: Кокаева Альбина;")
+            comment = h.get('comment', '')
+            if comment:
+                for label in _excluded_labels:
+                    # Удаляем подстроки вида "Назначена: Текст;" или "Назначена: Текст"
+                    import re
+                    comment = re.sub(r'(?:^|;\s*)' + re.escape(label) + r':\s*[^;]+(?:;|$)', '', comment).strip()
+                    # Убираем лишние разделители
+                    comment = re.sub(r'^;\s*', '', comment)
+                    comment = re.sub(r';{2,}', ';', comment)
+                    comment = comment.strip('; ').strip()
+                h['comment'] = comment
         images = db.get_ticket_images(ticket_number)
         # Добавляем URL для скачивания
         for img in images:
@@ -262,6 +285,13 @@ async def api_update_ticket(ticket_number: str, request: Request):
             old_str = str(old_value).strip() if old_value else ''
             if old_str != new_str and new_str:
                 changed_fields[field] = new_value
+
+        if not changed_fields:
+            return {"status": "ok", "message": "Нет изменений", "ticket": existing_ticket}
+
+        # Исключаем поля, которые не должны попадать в историю изменений
+        _history_excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+        changed_fields = {k: v for k, v in changed_fields.items() if k not in _history_excluded}
 
         if not changed_fields:
             return {"status": "ok", "message": "Нет изменений", "ticket": existing_ticket}

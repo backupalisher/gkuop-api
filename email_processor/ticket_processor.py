@@ -70,7 +70,14 @@ class TicketProcessor:
             # Не обновляем статус, но остальные поля можно обновлять
             pass
 
+        # Поля, которые не должны попадать в changed_fields
+        _excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+
         for field in self.TRACKED_FIELDS:
+            # Пропускаем поля, исключённые из отслеживания изменений
+            if field in _excluded:
+                continue
+
             old_value = existing_ticket.get(field, '') or ''
             new_value = new_data.get(field, '') or ''
 
@@ -132,6 +139,9 @@ class TicketProcessor:
         # Защита: если у заявки уже стоит "Выполнено" или "В архив" — не перезаписываем статус
         existing_status = (existing_ticket.get('status', '') or '').strip() if existing_ticket else ''
 
+        # Поля, которые не должны попадать в changed_fields истории
+        HISTORY_EXCLUDED_FIELDS = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+
         # Поля, которые отслеживаем в истории
         tracked_history_fields = [
             'status', 'priority', 'assigned_to', 'current_note', 'office', 'cabinet',
@@ -154,6 +164,10 @@ class TicketProcessor:
 
         # Сравниваем с актуальным состоянием заявки из БД (existing_ticket)
         for field in tracked_history_fields:
+            # Пропускаем поля, которые не должны отображаться в истории
+            if field in HISTORY_EXCLUDED_FIELDS:
+                continue
+
             old_value = existing_ticket.get(field, '') if existing_ticket else ''
 
             new_value = email_data.get(field, '') or ''

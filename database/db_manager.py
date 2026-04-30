@@ -379,12 +379,16 @@ class DatabaseManager:
                 # Для обратной совместимости: если changed_fields пуст,
                 # вычисляем diff из полных полей (старый формат данных)
                 changes = {}
+                # Поля, исключённые из отображения в истории
+                _excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
                 for field in ['subject', 'inventory_number', 'printer_model',
                               'office', 'cabinet', 'component', 'status', 'priority',
                               'assigned_to', 'author_name', 'contact_phone',
                               'department', 'position', 'current_note',
                               'required_action', 'cause', 'fault_description',
                               'work_done', 'tech_conclusion', 'soglasovano_line']:
+                    if field in _excluded:
+                        continue
                     val = row.get(field)
                     if val:
                         changes[field] = val
