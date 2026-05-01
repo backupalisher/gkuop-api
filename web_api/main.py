@@ -152,25 +152,60 @@ async def api_get_tickets(
             if len(search_clean) < 1:
                 pass  # не добавляем условий поиска
             else:
-                like_val = f"%{search_clean}%"
+                # Экранирование специальных символов ILIKE (% и _)
+                search_escaped = search_clean.replace('%', '\\%').replace('_', '\\_')
+                like_val = f"%{search_escaped}%"
 
-                # Поиск только по инвентарному номеру через ILIKE
-                # (регистронезависимый поиск по частичному совпадению)
+
+                # Нормализация номера заявки: удаляем разделители (дефисы, пробелы, точки, слеши)
+                ticket_normalized = re.sub(r'[\s\-\./]', '', search_clean)
+                like_ticket_normalized = f"%{ticket_normalized}%"
+
+                # Цифровая часть для поиска по инвентарному номеру
                 digits_only = re.sub(r'[^\d]', '', search_clean)
 
-                if digits_only:
-                    # Если в запросе есть цифры — ищем как по оригинальному inventory_number,
-                    # так и по нормализованному (без пробелов, дефисов и прочих разделителей)
-                    where_clauses.append(
-                        "(t.inventory_number ILIKE %s OR "
-                        "REGEXP_REPLACE(t.inventory_number, '[^0-9]', '', 'g') ILIKE %s)"
+                conditions = []
+                params_list = []
+
+                # ─── УРОВЕНЬ 1: Поиск по ticket_number ───
+                # 1a. Поиск по оригинальному ticket_number
+                conditions.append("t.ticket_number ILIKE %s ESCAPE '\\'")
+                params_list.append(like_val)
+
+                # 1b. Поиск по нормализованному ticket_number (без разделителей)
+                if ticket_normalized != search_clean:
+                    conditions.append(
+                        "REGEXP_REPLACE(t.ticket_number, '[\\s\\-\\./]', '', 'g') ILIKE %s ESCAPE '\\'"
                     )
-                    params.append(like_val)
-                    params.append(f"%{digits_only}%")
-                else:
-                    # Если цифр нет — ищем только по оригинальному inventory_number
-                    where_clauses.append("t.inventory_number ILIKE %s")
-                    params.append(like_val)
+                    params_list.append(like_ticket_normalized)
+
+                # ─── УРОВЕНЬ 2: Поиск по inventory_number ───
+                # 2a. Поиск по оригинальному inventory_number
+                conditions.append("t.inventory_number ILIKE %s ESCAPE '\\'")
+                params_list.append(like_val)
+
+                # 2b. Поиск по нормализованному inventory_number (только цифры)
+                if digits_only:
+                    conditions.append(
+                        "REGEXP_REPLACE(t.inventory_number, '[^0-9]', '', 'g') ILIKE %s ESCAPE '\\'"
+                    )
+                    params_list.append(f"%{digits_only}%")
+
+                # ─── УРОВЕНЬ 3: Поиск по текстовым полям ───
+                text_fields = [
+                    "t.subject", "t.fault_description", "t.work_done",
+                    "t.tech_conclusion", "t.cause", "t.current_note",
+                    "t.required_action", "t.soglasovano_line",
+                    "t.author_name", "t.printer_model", "t.office",
+                    "t.cabinet", "t.component", "t.department",
+                    "t.position", "t.assigned_to"
+                ]
+                for field in text_fields:
+                    conditions.append(f"{field} ILIKE %s ESCAPE '\\'")
+                    params_list.append(like_val)
+
+                where_clauses.append("(" + " OR ".join(conditions) + ")")
+                params.extend(params_list)
 
         # Фильтр по наличию изображений
         if has_images == "true":
@@ -218,6 +253,22 @@ async def api_get_tickets(
         )
         db.cursor.execute(data_query, params + [per_page, offset])
         rows = db.cursor.fetchall()
+
+        # Сортировка результатов по уровню приоритета:
+        # Уровень 1 (ticket_number) → Уровень 2 (inventory_number) → Уровень 3 (текстовые поля)
+        if search and rows:
+            search_lower = search_clean.lower()
+
+            def get_match_level(ticket):
+                tn = (ticket.get('ticket_number') or '').lower()
+                inv = (ticket.get('inventory_number') or '').lower()
+                if search_lower in tn:
+                    return 0  # Уровень 1 — найден по номеру заявки
+                if search_lower in inv:
+                    return 1  # Уровень 2 — найден по инвентарному номеру
+                return 2      # Уровень 3 — найден по текстовым полям
+
+            rows.sort(key=get_match_level)
 
         return {
             "tickets": [dict(r) for r in rows],
