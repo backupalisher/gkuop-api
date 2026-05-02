@@ -249,6 +249,9 @@ a:hover { text-decoration: underline; }
   font-weight: var(--font-weight-medium);
   color: var(--color-text);
   line-height: var(--line-height-tight);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
 }
 
 /* ─── Кнопки ───────────────────────────────────────────── */
@@ -453,9 +456,11 @@ a:hover { text-decoration: underline; }
 .table-wrap {
   background: var(--color-surface);
   border-radius: var(--radius-xl);
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   box-shadow: var(--shadow-md);
   border: 1px solid var(--color-border-light);
+  -webkit-overflow-scrolling: touch;
 }
 
 table { width: 100%; border-collapse: collapse; }
@@ -527,7 +532,7 @@ tr:hover td {
 }
 
 .table-wrap tbody tr:hover {
-  background-color: #d0e2ff !important;
+  background-color: #d0e2ff;
 }
 
 /* Иконка скрепки (paperclip) рядом с номером заявки */
@@ -858,6 +863,7 @@ tr:hover td {
   background: var(--color-surface-hover);
   cursor: pointer;
   position: relative;
+  aspect-ratio: 4 / 3;
 }
 
 .image-card .preview-wrap img {
@@ -1070,7 +1076,6 @@ tr:hover td {
   background: var(--color-border);
 }
 
-/* ─── Lightbox ─────────────────────────────────────────── */
 /* ─── Lightbox ─────────────────────────────────────────── */
 .lightbox {
   position: fixed;
@@ -1467,6 +1472,8 @@ tr:hover td {
     flex-direction: column;
     align-items: flex-start;
     padding: var(--space-4);
+    position: -webkit-sticky;
+    position: sticky;
   }
 
   .filters {
