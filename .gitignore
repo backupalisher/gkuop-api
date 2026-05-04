@@ -37,4 +37,6 @@ database/fix_last_updated_date.sql
 # Runtime files
 .gkuop_web.pid
 .gkuop_web.log
+.gkuop_supervisor.pid
+.gkuop_supervisor.log
 last_update.txt

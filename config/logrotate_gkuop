@@ -1,0 +1,94 @@
+# Конфигурация logrotate для ротации логов сервиса ГКУ ОП
+# Установка: sudo cp config/logrotate_gkuop /etc/logrotate.d/gkuop
+# Проверка: sudo logrotate -d /etc/logrotate.d/gkuop
+#
+# ВАЖНО: Все пути заданы абсолютными относительно корня проекта.
+# Для корректной работы logrotate необходимо указывать параметр --state с путём
+# к файлу состояния внутри проекта, например:
+#   sudo logrotate -s /home/ali/PycharmProjects/GKUOP/config/logrotate.state /etc/logrotate.d/gkuop
+# или задать глобальный параметр statefile в /etc/logrotate.conf:
+#   statefile /home/ali/PycharmProjects/GKUOP/config/logrotate.state
+
+# Основные логи сервиса
+./logs/parser_*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 100M
+    copytruncate
+    postrotate
+        # Уведомление не требуется, т.к. используется copytruncate
+    endscript
+}
+
+# Логи веб-сервера (uvicorn)
+./.gkuop_web.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 50M
+    copytruncate
+}
+
+# Логи супервизора
+./.gkuop_supervisor.log {
+    daily
+    rotate 14
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 50M
+    copytruncate
+}
+
+# Crash-логи (JSON-отчёты)
+./logs/crashes/crash_*.json {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 200M
+}
+
+# Логи супервизора (JSON-отчёты о крахах)
+./logs/supervisor/supervisor_*.log {
+    daily
+    rotate 30
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 100M
+}
+
+# Crash-отчёты супервизора
+./logs/supervisor/crash_detected_*.json {
+    daily
+    rotate 90
+    compress
+    delaycompress
+    missingok
+    notifempty
+    dateext
+    dateformat -%Y%m%d
+    maxsize 200M
+}
