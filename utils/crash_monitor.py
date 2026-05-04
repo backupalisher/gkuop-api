@@ -374,16 +374,20 @@ def _signal_handler(signum: int, frame):
     )
     save_crash_report(report)
 
+    # Формируем путь к crash-отчёту (отдельно от f-string для совместимости с Python 3.10)
+    crash_filename = f"crash_{report['crash_id']}.json"
+    crash_path = CRASH_LOG_DIR / crash_filename
+
     # Если это ручная остановка — пишем однозначную запись
     if is_manual:
         logger.info(
             f"🛑 СЕРВИС ОСТАНОВЛЕН ВРУЧНУЮ: сигнал {signal_name}, "
-            f"PID {_PID}. Crash-отчёт: {CRASH_LOG_DIR / f'crash_{report["crash_id"]}.json'}"
+            f"PID {_PID}. Crash-отчёт: {crash_path}"
         )
     else:
         logger.critical(
             f"💥 АВАРИЙНОЕ ЗАВЕРШЕНИЕ: сигнал {signal_name}, "
-            f"PID {_PID}. Crash-отчёт: {CRASH_LOG_DIR / f'crash_{report["crash_id"]}.json'}"
+            f"PID {_PID}. Crash-отчёт: {crash_path}"
         )
 
     # Вызываем callback shutdown, если он установлен
