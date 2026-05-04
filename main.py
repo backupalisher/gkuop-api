@@ -2,6 +2,7 @@
 Главный модуль приложения
 """
 import sys
+import signal
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -13,6 +14,7 @@ from email_processor.ticket_processor import TicketProcessor
 from utils.logger import logger
 from utils.helpers import print_statistics, confirm_action, exit_with_error
 from utils.incremental_updater import IncrementalUpdater
+from utils.crash_monitor import install_crash_monitor, uninstall_crash_monitor
 
 # Загрузка переменных окружения
 load_dotenv()
@@ -31,6 +33,9 @@ class EmailParserApplication:
     def initialize(self) -> bool:
         """Инициализация всех компонентов"""
         logger.info("Инициализация приложения...")
+
+        # Установка системы мониторинга аварийных завершений
+        install_crash_monitor()
 
         # Инициализация базы данных
         self.db_manager = DatabaseManager({

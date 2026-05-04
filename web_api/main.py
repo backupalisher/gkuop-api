@@ -31,6 +31,19 @@ from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from services.image_manager import ImageManager, ImageValidationError
 
+# Импорт системы мониторинга аварийных завершений
+from utils.crash_monitor import (
+    install_crash_monitor,
+    uninstall_crash_monitor,
+    set_last_request,
+    set_shutdown_callback,
+    mark_manual_stop,
+    get_crash_monitor_status,
+    list_crash_reports,
+    save_crash_report,
+    build_crash_report,
+)
+
 load_dotenv()
 
 # Глобальные экземпляры
@@ -55,7 +68,23 @@ async def lifespan(app: FastAPI):
         print("✗ Не удалось подключиться к БД")
     image_manager = ImageManager(upload_dir='uploads')
     print("✓ ImageManager инициализирован")
+
+    # Установка системы мониторинга аварийных завершений
+    def _shutdown_cleanup():
+        """Callback при аварийном завершении — закрываем соединения."""
+        if db:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    install_crash_monitor(shutdown_callback=_shutdown_cleanup)
+    print("🛡️ Система мониторинга аварийных завершений активирована")
+
     yield
+
+    # При штатном завершении (lifespan yield завершился) — снимаем обработчики
+    uninstall_crash_monitor()
     if db:
         db.close()
 
@@ -74,6 +103,34 @@ templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "t
 static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
+
+
+# ─── Middleware для отслеживания запросов ──────────────────────────
+
+
+@app.middleware("http")
+async def track_request_middleware(request: Request, call_next):
+    """Middleware для записи информации о текущем запросе в crash_monitor."""
+    # Получаем тело запроса (только для не-GET запросов)
+    body_preview = None
+    if request.method in ("POST", "PUT", "PATCH"):
+        try:
+            body = await request.body()
+            if body:
+                body_str = body.decode("utf-8", errors="replace")
+                body_preview = body_str[:500]  # Ограничиваем до 500 символов
+        except Exception:
+            pass
+
+    set_last_request(
+        method=request.method,
+        path=str(request.url.path),
+        client_ip=request.client.host if request.client else None,
+        body_preview=body_preview,
+    )
+
+    response = await call_next(request)
+    return response
 
 
 # ─── API эндпоинты ────────────────────────────────────────────────
@@ -934,6 +991,60 @@ async def ticket_detail(request: Request, ticket_number: str):
         "ticket_detail.html",
         {"request": request, "ticket_number": ticket_number},
     )
+
+
+# ─── Эндпоинты мониторинга ─────────────────────────────────────────
+
+
+@app.get("/api/health")
+async def api_health():
+    """Health-check endpoint для супервизора."""
+    status = get_crash_monitor_status()
+    db_ok = db is not None and hasattr(db, 'connection') and db.connection is not None
+    try:
+        if db_ok:
+            db.cursor.execute("SELECT 1")
+            db_ok = db.cursor.fetchone() is not None
+    except Exception:
+        db_ok = False
+
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "service": "gkuop-web",
+        "timestamp": datetime.utcnow().isoformat(),
+        "database": "connected" if db_ok else "disconnected",
+        "monitor": status,
+    }
+
+
+@app.get("/api/crash-reports")
+async def api_crash_reports(limit: int = Query(10, ge=1, le=100)):
+    """Получить список последних crash-отчётов."""
+    reports = list_crash_reports(limit=limit)
+    return {"crash_reports": reports, "total": len(reports)}
+
+
+@app.get("/api/crash-reports/{crash_id}")
+async def api_crash_report_detail(crash_id: str):
+    """Получить детальный crash-отчёт по ID."""
+    from utils.crash_monitor import CRASH_LOG_DIR
+    import json
+
+    for f in CRASH_LOG_DIR.glob(f"crash_{crash_id}.json"):
+        try:
+            with open(f, "r", encoding="utf-8") as fh:
+                report = json.load(fh)
+            return {"crash_report": report}
+        except Exception as e:
+            return JSONResponse({"error": f"Ошибка чтения отчёта: {e}"}, status_code=500)
+
+    return JSONResponse({"error": "Crash-отчёт не найден"}, status_code=404)
+
+
+@app.get("/api/monitor/status")
+async def api_monitor_status():
+    """Получить полный статус системы мониторинга."""
+    return get_crash_monitor_status()
 
 
 # ─── Запуск ────────────────────────────────────────────────────────
