@@ -37,6 +37,17 @@
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
 
+        // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
+        async function fetchJSON(url, options = {}) {
+            const r = await fetch(url, options);
+            if (!r.ok) {
+                const text = await r.text();
+                const preview = text.slice(0, 200);
+                throw new Error(`HTTP ${r.status}: ${preview}`);
+            }
+            return r.json();
+        }
+
         function getAuth() {
             try {
                 const raw = sessionStorage.getItem(AUTH_KEY);
@@ -70,12 +81,11 @@
             const errorEl = document.getElementById('authError');
 
             try {
-                const r = await fetch('/api/auth/login', {
+                const data = await fetchJSON('/api/auth/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({login, password})
                 });
-                const data = await r.json();
                 if (data.status === 'ok') {
                     setAuth(data.username);
                     showApp();
@@ -193,8 +203,7 @@
             const confirmed = await showModal('Выполнение заявки', 'Отметить заявку как выполненную?');
             if (!confirmed) return;
             try {
-                const r = await fetch(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
-                const data = await r.json();
+                const data = await fetchJSON(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('✓ Заявка отмечена как выполненная', 'success');
                 loadTicket();
@@ -205,8 +214,7 @@
             const confirmed = await showModal('Архивирование', 'Отправить заявку в архив?');
             if (!confirmed) return;
             try {
-                const r = await fetch(`/api/tickets/${ticketNumber}/archive`, { method: 'POST' });
-                const data = await r.json();
+                const data = await fetchJSON(`/api/tickets/${ticketNumber}/archive`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('📦 Заявка отправлена в архив', 'success');
                 loadTicket();
@@ -217,8 +225,7 @@
             const confirmed = await showModal('Восстановление', 'Восстановить заявку из архива?');
             if (!confirmed) return;
             try {
-                const r = await fetch(`/api/tickets/${ticketNumber}/restore`, { method: 'POST' });
-                const data = await r.json();
+                const data = await fetchJSON(`/api/tickets/${ticketNumber}/restore`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('↩ Заявка восстановлена из архива', 'success');
                 loadTicket();
@@ -269,8 +276,7 @@
 
         async function loadTicket() {
             try {
-                const r = await fetch(`/api/tickets/${ticketNumber}`);
-                const data = await r.json();
+                const data = await fetchJSON(`/api/tickets/${ticketNumber}`);
 
                 if (data.error) {
                     document.getElementById('content').innerHTML =
@@ -621,11 +627,10 @@
             progress.textContent = '⏳ Загрузка...';
 
             try {
-                const r = await fetch(`/api/tickets/${ticketNumber}/images`, {
+                const result = await fetchJSON(`/api/tickets/${ticketNumber}/images`, {
                     method: 'POST',
                     body: formData
                 });
-                const result = await r.json();
 
                 if (result.error) {
                     progress.className = 'upload-progress error';
@@ -667,8 +672,7 @@
             const confirmed = await showModal('Удаление файла', 'Удалить этот файл?');
             if (!confirmed) return;
             try {
-                const r = await fetch(`/api/images/${imageId}`, { method: 'DELETE' });
-                const result = await r.json();
+                const result = await fetchJSON(`/api/images/${imageId}`, { method: 'DELETE' });
                 if (result.status === 'ok') {
                     showToast('✅ Файл удалён', 'success');
                     loadTicket();

@@ -89,6 +89,17 @@
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
 
+        // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
+        async function fetchJSON(url, options = {}) {
+            const r = await fetch(url, options);
+            if (!r.ok) {
+                const text = await r.text();
+                const preview = text.slice(0, 200);
+                throw new Error(`HTTP ${r.status}: ${preview}`);
+            }
+            return r.json();
+        }
+
         function getAuth() {
             try {
                 const raw = sessionStorage.getItem(AUTH_KEY);
@@ -122,12 +133,11 @@
             const errorEl = document.getElementById('authError');
 
             try {
-                const r = await fetch('/api/auth/login', {
+                const data = await fetchJSON('/api/auth/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
                     body: JSON.stringify({login, password})
                 });
-                const data = await r.json();
                 if (data.status === 'ok') {
                     setAuth(data.username);
                     showApp();
@@ -286,8 +296,7 @@
 
         async function loadTabCounts() {
             try {
-                const r = await fetch('/api/statistics');
-                const data = await r.json();
+                const data = await fetchJSON('/api/statistics');
                 document.getElementById('countActive').textContent = data.active ?? '—';
                 document.getElementById('countArchived').textContent = data.archived ?? '—';
             } catch (e) {
@@ -305,8 +314,7 @@
 
         async function loadStatuses() {
             try {
-                const r = await fetch('/api/statuses');
-                const data = await r.json();
+                const data = await fetchJSON('/api/statuses');
                 const sel = document.getElementById('statusFilter');
                 data.statuses.forEach(s => {
                     const opt = document.createElement('option');
@@ -383,8 +391,7 @@
                 '<tr><td colspan="5" class="loading">Загрузка...</td></tr>';
 
             try {
-                const r = await fetch('/api/tickets?' + params.toString());
-                const data = await r.json();
+                const data = await fetchJSON('/api/tickets?' + params.toString());
 
                 if (data.error) {
                     showError(data.error);
@@ -488,8 +495,7 @@
             showError('');
 
             try {
-                const r = await fetch('/api/rebuild', { method: 'POST' });
-                const data = await r.json();
+                const data = await fetchJSON('/api/rebuild', { method: 'POST' });
 
                 if (data.error) {
                     showError('Ошибка: ' + data.error);

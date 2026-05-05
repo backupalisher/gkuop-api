@@ -19,6 +19,7 @@ from fastapi import FastAPI, Request, Query, UploadFile, File, HTTPException
 from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from psycopg2.sql import SQL, Identifier
@@ -96,6 +97,15 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# CORS middleware (разрешаем запросы с любых источников для production за Nginx)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 # Шаблоны
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -141,6 +151,12 @@ async def api_login(request: Request):
     """Аутентификация по хешированным учётным данным из переменных окружения"""
     try:
         body = await request.json()
+    except Exception as e:
+        body_raw = await request.body()
+        logger.error(f"JSON parse error in /api/auth/login: {e}. Body preview: {body_raw[:200]}")
+        return JSONResponse({"status": "error", "message": "Неверный формат JSON"}, status_code=400)
+
+    try:
         login = body.get("login", "").strip()
         password = body.get("password", "").strip()
 
@@ -398,7 +414,12 @@ async def api_update_ticket(ticket_number: str, request: Request):
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
         # 2. Получаем данные из тела запроса
-        body = await request.json()
+        try:
+            body = await request.json()
+        except Exception as e:
+            body_raw = await request.body()
+            logger.error(f"JSON parse error in PUT /api/tickets/{ticket_number}: {e}. Body preview: {body_raw[:200]}")
+            return JSONResponse({"error": "Неверный формат JSON"}, status_code=400)
 
         # 3. Вычисляем diff между актуальным состоянием и новыми данными
         changed_fields = {}
