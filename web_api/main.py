@@ -536,6 +536,12 @@ async def api_complete_ticket(ticket_number: str, request: Request):
         # перезаписываться при ручном изменении статуса на "Выполнено"
         db.update_ticket(ticket_number, changed_fields)
 
+        # При выполнении заявки автоматически удаляем её из задач
+        try:
+            db.remove_task(ticket_number)
+        except Exception:
+            pass  # Не критично, если не было в задачах
+
         # Обрабатываем опциональные файлы, если они есть
         uploaded_images = []
         try:
@@ -623,6 +629,118 @@ async def api_restore_ticket(ticket_number: str):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+# ─── API эндпоинты для задач ────────────────────────────────────────
+
+
+@app.post("/api/tickets/{ticket_number}/task")
+async def api_add_task(ticket_number: str):
+    """Добавить заявку в список задач"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        existing_ticket = db.get_ticket(ticket_number)
+        if not existing_ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        if db.add_task(ticket_number):
+            return {"status": "ok", "message": "Заявка добавлена в задачи"}
+        return JSONResponse({"error": "Не удалось добавить задачу"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.delete("/api/tickets/{ticket_number}/task")
+async def api_remove_task(ticket_number: str):
+    """Удалить заявку из списка задач"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        if db.remove_task(ticket_number):
+            return {"status": "ok", "message": "Заявка удалена из задач"}
+        return JSONResponse({"error": "Не удалось удалить задачу"}, status_code=500)
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/tickets/{ticket_number}/task")
+async def api_check_task(ticket_number: str):
+    """Проверить, находится ли заявка в списке задач"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        is_task = db.is_task(ticket_number)
+        return {"is_task": is_task}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/tasks")
+async def api_get_tasks():
+    """Получить список номеров заявок в задачах"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        task_numbers = db.get_task_numbers()
+        return {"tasks": task_numbers, "count": len(task_numbers)}
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/tasks/tickets")
+async def api_get_task_tickets(
+    page: int = Query(1, ge=1),
+    per_page: int = Query(50, ge=1, le=200),
+    sort_by: str = Query("last_updated_date"),
+    sort_order: str = Query("desc"),
+):
+    """Получить заявки из списка задач с пагинацией (только активные, не архивированные)"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        allowed_sort = {
+            "ticket_number", "status", "last_updated_date",
+            "first_received_date", "author_name", "inventory_number"
+        }
+        if sort_by not in allowed_sort:
+            sort_by = "last_updated_date"
+        if sort_order not in ("asc", "desc"):
+            sort_order = "desc"
+
+        # Сначала получаем общее количество
+        db.cursor.execute("""
+            SELECT COUNT(*) as total
+            FROM tickets t
+            INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
+            WHERE (t.is_archived IS NULL OR t.is_archived = FALSE)
+        """)
+        total = db.cursor.fetchone()["total"]
+
+        offset = (page - 1) * per_page
+        sort_column = Identifier(sort_by)
+        query = SQL("""
+            SELECT t.*,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM ticket_images ti
+                       WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE
+                   ) THEN TRUE ELSE FALSE END AS has_files
+            FROM tickets t
+            INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
+            WHERE (t.is_archived IS NULL OR t.is_archived = FALSE)
+            ORDER BY t.{} {} LIMIT %s OFFSET %s
+        """).format(sort_column, SQL(sort_order))
+        db.cursor.execute(query, [per_page, offset])
+        rows = db.cursor.fetchall()
+
+        return {
+            "tickets": [dict(r) for r in rows],
+            "total": total,
+            "page": page,
+            "per_page": per_page,
+            "total_pages": max(1, (total + per_page - 1) // per_page),
+        }
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
 # ─── API эндпоинты для изображений ──────────────────────────────────
 
 
@@ -641,9 +759,28 @@ async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(.
         uploaded = []
         errors = []
 
+        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
+
         for file in files:
             try:
+                # Проверяем размер файла до чтения (если Content-Length известен)
+                if file.size is not None and file.size > MAX_FILE_SIZE:
+                    errors.append({
+                        "file": file.filename,
+                        "error": f"Файл слишком большой ({file.size / 1024 / 1024:.1f} МБ). Максимум: 50 МБ"
+                    })
+                    continue
+
                 file_bytes = await file.read()
+
+                # Проверяем размер после чтения (если Content-Length не был указан)
+                if len(file_bytes) > MAX_FILE_SIZE:
+                    errors.append({
+                        "file": file.filename,
+                        "error": f"Файл слишком большой ({len(file_bytes) / 1024 / 1024:.1f} МБ). Максимум: 50 МБ"
+                    })
+                    continue
+
                 mime_type = file.content_type or 'image/jpeg'
 
                 # Сохраняем файл через ImageManager

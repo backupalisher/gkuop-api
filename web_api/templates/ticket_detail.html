@@ -206,6 +206,25 @@
                 const data = await fetchJSON(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('✓ Заявка отмечена как выполненная', 'success');
+                // Сервер автоматически удаляет заявку из задач при выполнении
+                // Уведомляем другие вкладки/окна об изменении списка задач
+                try { localStorage.setItem('gkuop_task_update', Date.now().toString()); } catch (_) {}
+                loadTicket();
+            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function toggleTask() {
+            try {
+                const checkData = await fetchJSON(`/api/tickets/${ticketNumber}/task`);
+                if (checkData.is_task) {
+                    const data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'DELETE' });
+                    if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                    showToast('Заявка удалена из задач', 'info');
+                } else {
+                    const data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'POST' });
+                    if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                }
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
@@ -276,7 +295,10 @@
 
         async function loadTicket() {
             try {
-                const data = await fetchJSON(`/api/tickets/${ticketNumber}`);
+                const [data, taskData] = await Promise.all([
+                    fetchJSON(`/api/tickets/${ticketNumber}`),
+                    fetchJSON(`/api/tickets/${ticketNumber}/task`).catch(() => ({ is_task: false }))
+                ]);
 
                 if (data.error) {
                     document.getElementById('content').innerHTML =
@@ -288,7 +310,7 @@
                 const history = data.history || [];
 
                 // Собираем актуальное состояние заявки из тикета + всех diff-записей истории
-                const s = { ...t };
+                const s = { ...t, _is_task: taskData.is_task === true };
                 const snapshots = history.filter(h => h.type === 'snapshot');
                 for (const snap of snapshots) {
                     if (snap.changed_fields && typeof snap.changed_fields === 'object') {
@@ -306,6 +328,12 @@
                 html += `<a href="/" class="btn-action btn-back" onclick="event.preventDefault(); goBackToList()">← Назад к списку</a>`;
                 html += `<span style="flex:1"></span>`;
                 if (!isArchived) {
+                    // Кнопка "Задача 🔵" — показываем всегда, кроме случаев когда заявка уже назначена
+                    const assignedTo = (s.assigned_to || '').trim();
+                    if (!assignedTo) {
+                        const isTask = s._is_task === true;
+                        html += `<button class="btn-action btn-task ${isTask ? 'active' : ''}" onclick="toggleTask()">${isTask ? '✅ Задача' : '🔵 Задача'}</button>`;
+                    }
                     html += `<button class="btn-action btn-complete" onclick="completeTicket()">✓ Выполнено</button>`;
                     html += `<button class="btn-action btn-archive" onclick="archiveTicket()">📦 В архив</button>`;
                 } else {

@@ -79,6 +79,7 @@ start() {
     nohup "$UVICORN" web_api.main:app \
         --host 127.0.0.1 \
         --port "$PORT" \
+        --limit-concurrency 10 \
         > "$LOG_FILE" 2>&1 &
 
     PID=$!

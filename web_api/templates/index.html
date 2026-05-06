@@ -7,19 +7,6 @@
     <link rel="stylesheet" href="/static/css/main.css">
     <style>
         /* Минимальные специфичные стили только для index.html */
-        .header-actions {
-            display: flex;
-            align-items: center;
-            gap: var(--space-3);
-        }
-        .header-actions .btn {
-            background: rgba(255,255,255,0.1);
-            color: #fff;
-            border: 1px solid rgba(255,255,255,0.2);
-        }
-        .header-actions .btn:hover {
-            background: rgba(255,255,255,0.2);
-        }
     </style>
 </head>
 <body>
@@ -35,7 +22,11 @@
 
     <div class="header">
         <h1>ГКУ ОП <span>Заявки</span></h1>
-        <div id="authIndicator" class="header-actions" style="display:none"></div>
+        <div id="authIndicator" class="header-actions" style="display:none">
+            <span class="auth-indicator"></span>
+            <button class="btn btn-rebuild" onclick="rebuildDatabase()" id="rebuildBtn">⟳ Обновить данные</button>
+            <button class="btn btn-logout" onclick="handleLogout()">Выйти</button>
+        </div>
     </div>
 
     <div class="container">
@@ -46,22 +37,22 @@
 
         <div class="tabs">
             <button class="tab-btn active" id="tabActive" onclick="switchTab('active')">
-                Активные <span class="count" id="countActive">—</span>
+                <span class="tab-icon">📃</span><span class="tab-label">Активные</span> <span class="count" id="countActive">—</span>
+            </button>
+            <button class="tab-btn" id="tabTasks" onclick="switchTab('tasks')">
+                <span class="tab-icon">📑</span><span class="tab-label">Задачи</span> <span class="count" id="countTasks">—</span>
             </button>
             <button class="tab-btn" id="tabArchived" onclick="switchTab('archived')">
-                Архив <span class="count" id="countArchived">—</span>
+                <span class="tab-icon">🗃️</span><span class="tab-label">Архив</span> <span class="count" id="countArchived">—</span>
             </button>
         </div>
 
         <div class="filters">
-            <input type="text" class="input" id="searchInput"
-                placeholder="Поиск: № заявки, инв. номер (в т.ч. по последним цифрам), тема, автор, устройство..." />
-            <select class="select" id="statusFilter">
-                <option value="">Все статусы</option>
-            </select>
-            <button class="btn btn-primary" onclick="onSearchNow()">🔍 Поиск</button>
-            <button class="btn btn-outline" onclick="resetFilters()">✕ Сброс</button>
-            <button class="btn btn-outline" onclick="rebuildDatabase()" id="rebuildBtn">⟳ Обновить данные</button>
+            <div class="search-wrap">
+                <input type="text" class="input" id="searchInput"
+                    placeholder="Поиск: № заявки, инв. номер (в т.ч. по последним цифрам), тема, автор, устройство..." />
+                <button class="search-btn" onclick="onSearchNow()" title="Найти">🔍</button>
+            </div>
         </div>
 
         <div id="searchResultsInfo" class="search-results-info" style="display:none; margin-bottom:8px; font-size:0.9em; color:#666;"></div>
@@ -166,7 +157,7 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>Logged in as ' + auth.username + '<button class="auth-logout" onclick="handleLogout()">Выйти</button></span>';
+                indicator.querySelector('.auth-indicator').textContent = auth.username;
             }
         }
 
@@ -180,7 +171,6 @@
                 order: currentOrder,
                 tab: currentTab,
                 search: document.getElementById('searchInput').value,
-                status: document.getElementById('statusFilter').value,
                 scrollY: window.scrollY,
                 timestamp: Date.now()
             };
@@ -212,10 +202,10 @@
             currentOrder = state.order || 'desc';
             currentTab = state.tab || 'active';
             if (state.search) document.getElementById('searchInput').value = state.search;
-            if (state.status) document.getElementById('statusFilter').value = state.status;
 
             // Восстанавливаем активный таб
             document.getElementById('tabActive').classList.toggle('active', currentTab === 'active');
+            document.getElementById('tabTasks').classList.toggle('active', currentTab === 'tasks');
             document.getElementById('tabArchived').classList.toggle('active', currentTab === 'archived');
 
             // Восстанавливаем стрелки сортировки
@@ -240,6 +230,7 @@
         let currentSort = 'last_updated_date';
         let currentOrder = 'desc';
         let currentTab = 'active';
+        let taskNumbers = [];  // Номера заявок, находящихся в задачах
 
         // ─── Toast-уведомления ──────────────────────────────
         function showToast(message, type = 'info', duration = 4000) {
@@ -296,9 +287,13 @@
 
         async function loadTabCounts() {
             try {
-                const data = await fetchJSON('/api/statistics');
-                document.getElementById('countActive').textContent = data.active ?? '—';
-                document.getElementById('countArchived').textContent = data.archived ?? '—';
+                const [stats, tasksData] = await Promise.all([
+                    fetchJSON('/api/statistics'),
+                    fetchJSON('/api/tasks')
+                ]);
+                document.getElementById('countActive').textContent = stats.active ?? '—';
+                document.getElementById('countArchived').textContent = stats.archived ?? '—';
+                document.getElementById('countTasks').textContent = tasksData.count ?? '—';
             } catch (e) {
                 console.error('Stats error:', e);
             }
@@ -308,23 +303,9 @@
             currentTab = tab;
             currentPage = 1;
             document.getElementById('tabActive').classList.toggle('active', tab === 'active');
+            document.getElementById('tabTasks').classList.toggle('active', tab === 'tasks');
             document.getElementById('tabArchived').classList.toggle('active', tab === 'archived');
             loadTickets();
-        }
-
-        async function loadStatuses() {
-            try {
-                const data = await fetchJSON('/api/statuses');
-                const sel = document.getElementById('statusFilter');
-                data.statuses.forEach(s => {
-                    const opt = document.createElement('option');
-                    opt.value = s;
-                    opt.textContent = s;
-                    sel.appendChild(opt);
-                });
-            } catch (e) {
-                console.error('Statuses error:', e);
-            }
         }
 
         function statusClass(status) {
@@ -373,29 +354,79 @@
             loadTickets();
         }
 
+        async function loadTaskNumbers() {
+            try {
+                const data = await fetchJSON('/api/tasks');
+                taskNumbers = data.tasks || [];
+            } catch (e) {
+                console.error('Load tasks error:', e);
+                taskNumbers = [];
+            }
+        }
+
+        function isInTasks(ticketNumber) {
+            return taskNumbers.includes(ticketNumber);
+        }
+
+        async function toggleTaskFromList(ticketNumber, event) {
+            event.preventDefault();
+            event.stopPropagation();
+            try {
+                if (isInTasks(ticketNumber)) {
+                    await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'DELETE' });
+                    showToast('Заявка удалена из задач', 'info');
+                } else {
+                    await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'POST' });
+                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                }
+                // Обновляем список задач и перезагружаем текущую вкладку
+                await loadTaskNumbers();
+                loadTickets();
+                loadTabCounts();
+            } catch (e) {
+                showToast('Ошибка: ' + e.message, 'error');
+            }
+        }
+
         async function loadTickets() {
             const search = document.getElementById('searchInput').value;
-            const status = document.getElementById('statusFilter').value;
-
-            const params = new URLSearchParams({
-                page: currentPage,
-                per_page: 50,
-                sort_by: currentSort,
-                sort_order: currentOrder,
-                archived: currentTab === 'archived' ? '1' : '0',
-            });
-            if (search) params.set('search', search);
-            if (status) params.set('status', status);
 
             document.getElementById('ticketsBody').innerHTML =
                 '<tr><td colspan="5" class="loading">Загрузка...</td></tr>';
 
             try {
-                const data = await fetchJSON('/api/tickets?' + params.toString());
+                let data;
+
+                if (currentTab === 'tasks') {
+                    // Для вкладки "Задачи" используем отдельный эндпоинт
+                    const params = new URLSearchParams({
+                        page: currentPage,
+                        per_page: 50,
+                        sort_by: currentSort,
+                        sort_order: currentOrder,
+                    });
+                    data = await fetchJSON('/api/tasks/tickets?' + params.toString());
+                } else {
+                    // Для вкладок "Активные" и "Архив"
+                    const params = new URLSearchParams({
+                        page: currentPage,
+                        per_page: 50,
+                        sort_by: currentSort,
+                        sort_order: currentOrder,
+                        archived: currentTab === 'archived' ? '1' : '0',
+                    });
+                    if (search) params.set('search', search);
+                    data = await fetchJSON('/api/tickets?' + params.toString());
+                }
 
                 if (data.error) {
                     showError(data.error);
                     return;
+                }
+
+                // Загружаем список задач для отображения 🔵 во вкладке "Активные"
+                if (currentTab === 'active') {
+                    await loadTaskNumbers();
                 }
 
                 const tbody = document.getElementById('ticketsBody');
@@ -405,23 +436,25 @@
                     tbody.innerHTML = '<tr><td colspan="5" class="empty">Заявки не найдены</td></tr>';
                     if (resultsInfo) resultsInfo.style.display = 'none';
                 } else {
-                    tbody.innerHTML = data.tickets.map((t, idx) => `
-                        <tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
-                            <td data-label="№ заявки"><a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
+                    tbody.innerHTML = data.tickets.map((t, idx) => {
+                        const inTasks = isInTasks(t.ticket_number);
+                        const taskBtn = (currentTab === 'active')
+                            ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
+                            : '';
+                        return `<tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
+                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}</span></td>
                             <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
                             <td data-label="Кабинет">${t.cabinet ? t.office + ' / ' + t.cabinet : (t.office || '—')}</td>
                             <td data-label="Обновлено">${formatDate(t.last_updated_date)}</td>
-                        </tr>
-                    `).join('');
+                        </tr>`;
+                    }).join('');
 
                     // Отображаем количество найденных заявок
                     if (resultsInfo) {
                         const searchVal = document.getElementById('searchInput').value.trim();
-                        const statusVal = document.getElementById('statusFilter').value;
                         let label = `Найдено заявок: <strong>${data.total}</strong>`;
                         if (searchVal) label += ` (поиск: «${escapeHtml(searchVal)}»)`;
-                        if (statusVal) label += `, статус: «${statusVal}»`;
                         resultsInfo.innerHTML = label;
                         resultsInfo.style.display = 'block';
                     }
@@ -470,14 +503,6 @@
             document.querySelectorAll('th .arrow').forEach(a => a.textContent = '');
             const arrow = document.getElementById('arr-' + field);
             if (arrow) arrow.textContent = currentOrder === 'asc' ? '▲' : '▼';
-            currentPage = 1;
-            loadTickets();
-        }
-
-        function resetFilters() {
-            clearTimeout(searchDebounceTimer);
-            document.getElementById('searchInput').value = '';
-            document.getElementById('statusFilter').value = '';
             currentPage = 1;
             loadTickets();
         }
@@ -545,7 +570,6 @@
         }
 
         loadTabCounts();
-        loadStatuses();
 
         // Пытаемся восстановить состояние списка при возврате с детальной страницы
         const savedState = restoreListState();
@@ -554,6 +578,27 @@
         } else {
             loadTickets();
         }
+
+        // Слушаем изменения localStorage из других вкладок/окон (например, при выполнении заявки)
+        window.addEventListener('storage', function(e) {
+            if (e.key === 'gkuop_task_update') {
+                loadTaskNumbers().then(() => {
+                    loadTickets();
+                    loadTabCounts();
+                });
+            }
+        });
+
+        // При возврате на страницу через history.back (bfcache) — перезагружаем задачи
+        window.addEventListener('pageshow', function(e) {
+            if (e.persisted) {
+                // Страница восстановлена из bfcache — обновляем данные
+                loadTaskNumbers().then(() => {
+                    loadTickets();
+                    loadTabCounts();
+                });
+            }
+        });
     </script>
 </body>
 </html>

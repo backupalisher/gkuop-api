@@ -186,6 +186,17 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_history_date ON ticket_history(received_date);
             """,
             """
+            CREATE TABLE IF NOT EXISTS ticket_tasks
+            (
+                id SERIAL PRIMARY KEY,
+                ticket_number VARCHAR(20) UNIQUE NOT NULL REFERENCES tickets(ticket_number) ON DELETE CASCADE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_tasks_ticket ON ticket_tasks(ticket_number);
+            """,
+            """
             CREATE TABLE IF NOT EXISTS ticket_images
             (
                 id SERIAL PRIMARY KEY,
@@ -447,6 +458,58 @@ class DatabaseManager:
                             """)
         stats = self.cursor.fetchone()
         return dict(stats)
+
+    # ─── Методы для работы с задачами ────────────────────────────────
+
+    def add_task(self, ticket_number: str) -> bool:
+        """Добавить заявку в список задач"""
+        try:
+            self.cursor.execute(
+                "INSERT INTO ticket_tasks (ticket_number) VALUES (%s) ON CONFLICT (ticket_number) DO NOTHING",
+                (ticket_number,)
+            )
+            self.connection.commit()
+            return True
+        except Exception as e:
+            print(f"Ошибка добавления задачи: {e}")
+            self.connection.rollback()
+            return False
+
+    def remove_task(self, ticket_number: str) -> bool:
+        """Удалить заявку из списка задач"""
+        try:
+            self.cursor.execute(
+                "DELETE FROM ticket_tasks WHERE ticket_number = %s",
+                (ticket_number,)
+            )
+            self.connection.commit()
+            return True
+        except Exception as e:
+            print(f"Ошибка удаления задачи: {e}")
+            self.connection.rollback()
+            return False
+
+    def is_task(self, ticket_number: str) -> bool:
+        """Проверить, находится ли заявка в списке задач"""
+        self.cursor.execute(
+            "SELECT id FROM ticket_tasks WHERE ticket_number = %s",
+            (ticket_number,)
+        )
+        return self.cursor.fetchone() is not None
+
+    def get_task_numbers(self) -> List[str]:
+        """Получить список номеров заявок, находящихся в задачах"""
+        self.cursor.execute(
+            "SELECT ticket_number FROM ticket_tasks ORDER BY created_at DESC"
+        )
+        rows = self.cursor.fetchall()
+        return [r['ticket_number'] for r in rows]
+
+    def get_task_count(self) -> int:
+        """Получить количество заявок в задачах"""
+        self.cursor.execute("SELECT COUNT(*) as cnt FROM ticket_tasks")
+        row = self.cursor.fetchone()
+        return row['cnt'] if row else 0
 
     def archive_old_tickets(self, before_date: datetime) -> Dict[str, Any]:
         """
