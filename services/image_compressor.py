@@ -416,11 +416,16 @@ class ImageCompressor:
         conversion_target = self._needs_conversion(source_ext)
         if conversion_target:
             if has_alpha and self.config.keep_alpha:
+                # Для альфа-канала пробуем WebP, но если он больше PNG — оставляем PNG
+                if source_ext == '.png':
+                    return '.png'  # Сохраняем как PNG lossless
                 return '.webp'
             return conversion_target
 
         if source_ext == '.png' and has_alpha and self.config.keep_alpha:
-            return '.webp'
+            # PNG с альфа-каналом: WebP может быть больше из-за lossy-артефактов
+            # и неэффективного кодирования альфы. Оставляем PNG (lossless).
+            return '.png'
 
         if source_ext in ANIMATED_FORMATS:
             return source_ext
@@ -499,15 +504,65 @@ class ImageCompressor:
     ) -> Tuple[int, Optional[bytes]]:
         """Бинарный поиск оптимального качества.
 
+        Стратегия:
+        1. Сначала проверяем, вписывается ли изображение в target_size даже на min_quality.
+           Если нет — возвращаем лучшее из того, что есть (наименьший размер).
+        2. Бинарным поиском находим максимальное quality, при котором размер ≤ target_size.
+        3. Если размер на max_quality уже меньше target_size, дополнительно снижаем quality
+           для достижения большего сжатия (но не ниже min_quality + 15, чтобы сохранить
+           приемлемое визуальное качество).
+
         Returns:
             Tuple[int, Optional[bytes]]: (лучшее_качество, закодированные_данные_последней_итерации)
         """
         if output_ext == '.png':
             return 100, None
 
+        # Шаг 1: проверяем минимальное quality
+        data_min = self._encode_image(img, output_format, min_quality)
+        if data_min is None:
+            return max_quality, None
+        size_min = len(data_min)
+
+        # Если даже на минимальном качестве размер больше target — возвращаем минимальный размер
+        if size_min > target_size:
+            return min_quality, data_min
+
+        # Шаг 2: проверяем максимальное quality
+        data_max = self._encode_image(img, output_format, max_quality)
+        if data_max is None:
+            return min_quality, data_min
+        size_max = len(data_max)
+
+        # Если на максимальном качестве размер уже меньше target — снижаем quality
+        # для дополнительной экономии (но не ниже min_quality + 15)
+        if size_max <= target_size:
+            lower_bound = max(min_quality + 15, min_quality)
+            # Бинарный поиск: ищем минимальное quality, при котором размер ≤ target_size
+            low, high = lower_bound, max_quality
+            best_quality = high
+            best_data = data_max
+
+            while low <= high:
+                mid = (low + high) // 2
+                data = self._encode_image(img, output_format, mid)
+                if data is None:
+                    high = mid - 1
+                    continue
+                size = len(data)
+                if size <= target_size:
+                    best_quality = mid
+                    best_data = data
+                    high = mid - 1  # пытаемся снизить quality ещё
+                else:
+                    low = mid + 1
+
+            return best_quality, best_data
+
+        # Шаг 3: стандартный бинарный поиск между min_quality и max_quality
         low, high = min_quality, max_quality
         best_quality = high
-        best_data = None
+        best_data = data_max
 
         while low <= high:
             mid = (low + high) // 2
@@ -653,7 +708,7 @@ class ImageCompressor:
 
         with self._pixel_limit_context():
             return self._compress_impl(
-                source_path, output_path, output_ext, preset, **kwargs
+                source_path, output_path, output_ext, preset, start_time, **kwargs
             )
 
     def _compress_impl(
@@ -662,9 +717,12 @@ class ImageCompressor:
         output_path: Optional[Union[str, Path]] = None,
         output_ext: Optional[str] = None,
         preset: Optional[CompressionPreset] = None,
+        start_time: Optional[float] = None,
         **kwargs
     ) -> CompressionResult:
 
+        if start_time is None:
+            start_time = time.time()
         source_ext = source_path.suffix.lower()
         original_size = source_path.stat().st_size
 
@@ -837,6 +895,7 @@ class ImageCompressor:
         config: CompressionConfig,
         start_time: float,
     ) -> Tuple[bytes, Dict]:
+        original_size = len(data)
         try:
             img = Image.open(io.BytesIO(data))
             img.load()

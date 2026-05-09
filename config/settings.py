@@ -95,11 +95,39 @@ class ParserConfig:
 
 
 
+@dataclass
+class CompressionConfig:
+    """Конфигурация сжатия изображений"""
+    enabled: bool = True
+    preset: str = 'balanced'  # max_quality, balanced, traffic_saving
+    max_long_side: int = 1280
+    jpeg_quality: int = 88
+    webp_quality: int = 88
+    target_max_size_kb: int = 600
+    keep_exif: bool = True
+    keep_alpha: bool = True
+
+    @classmethod
+    def from_env(cls):
+        """Загрузка из переменных окружения"""
+        return cls(
+            enabled=os.getenv('IMAGE_COMPRESSION_ENABLED', 'true').lower() == 'true',
+            preset=os.getenv('IMAGE_COMPRESSION_PRESET', 'balanced'),
+            max_long_side=int(os.getenv('IMAGE_MAX_LONG_SIDE', 1280)),
+            jpeg_quality=int(os.getenv('IMAGE_JPEG_QUALITY', 88)),
+            webp_quality=int(os.getenv('IMAGE_WEBP_QUALITY', 88)),
+            target_max_size_kb=int(os.getenv('IMAGE_TARGET_MAX_SIZE_KB', 600)),
+            keep_exif=os.getenv('IMAGE_KEEP_EXIF', 'true').lower() == 'true',
+            keep_alpha=os.getenv('IMAGE_KEEP_ALPHA', 'true').lower() == 'true',
+        )
+
+
 # Загрузка конфигурации
 def load_config():
     """Загрузка всех конфигураций"""
     return {
         'email': EmailConfig.from_env(),
         'database': DatabaseConfig.from_env(),
-        'parser': ParserConfig()
+        'parser': ParserConfig(),
+        'compression': CompressionConfig.from_env(),
     }

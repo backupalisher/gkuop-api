@@ -31,6 +31,10 @@ from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from services.image_manager import ImageManager, ImageValidationError
+from services.image_compressor import (
+    ImageCompressor, CompressionConfig as CompressorConfig,
+    CompressionPreset
+)
 
 # Импорт системы мониторинга аварийных завершений
 from utils.crash_monitor import (
@@ -67,8 +71,31 @@ async def lifespan(app: FastAPI):
     db = DatabaseManager(db_config)
     if not db.connect():
         print("✗ Не удалось подключиться к БД")
-    image_manager = ImageManager(upload_dir='uploads')
-    print("✓ ImageManager инициализирован")
+    # Инициализация ImageManager с компрессией изображений
+    comp_config = config.get('compression')
+    if comp_config and comp_config.enabled:
+        compressor_cfg = CompressorConfig()
+        preset_map = {
+            'max_quality': CompressionPreset.MAX_QUALITY,
+            'balanced': CompressionPreset.BALANCED,
+            'traffic_saving': CompressionPreset.TRAFFIC_SAVING,
+        }
+        compressor_cfg.apply_preset(preset_map.get(comp_config.preset, CompressionPreset.BALANCED))
+        compressor_cfg.max_long_side = comp_config.max_long_side
+        compressor_cfg.jpeg_quality = comp_config.jpeg_quality
+        compressor_cfg.webp_quality = comp_config.webp_quality
+        compressor_cfg.target_max_size = comp_config.target_max_size_kb * 1024
+        compressor_cfg.keep_exif = comp_config.keep_exif
+        compressor_cfg.keep_alpha = comp_config.keep_alpha
+        image_manager = ImageManager(
+            upload_dir='uploads',
+            compression_config=compressor_cfg,
+            compression_enabled=True,
+        )
+        print(f"✓ ImageManager инициализирован (компрессия: {comp_config.preset})")
+    else:
+        image_manager = ImageManager(upload_dir='uploads', compression_enabled=False)
+        print("✓ ImageManager инициализирован (компрессия выключена)")
 
     # Установка системы мониторинга аварийных завершений
     def _shutdown_cleanup():

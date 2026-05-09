@@ -126,8 +126,9 @@
 
         // ─── Навигация назад к списку ───────────────────────
         function goBackToList() {
-            // Пытаемся вернуться через history API, если есть сохранённое состояние
-            if (document.referrer && document.referrer.includes(window.location.origin)) {
+            // Просто возвращаемся назад через history API
+            // Если нет истории в сессии — переходим на главную
+            if (window.history.length > 1) {
                 history.back();
             } else {
                 window.location.href = '/';
@@ -199,6 +200,11 @@
             return 'status-default';
         }
 
+        // Флаг для принудительного обновления списка при возврате
+        function markListNeedsRefresh() {
+            try { sessionStorage.setItem('gkuop_list_needs_refresh', '1'); } catch (_) {}
+        }
+
         async function completeTicket() {
             const confirmed = await showModal('Выполнение заявки', 'Отметить заявку как выполненную?');
             if (!confirmed) return;
@@ -206,6 +212,7 @@
                 const data = await fetchJSON(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('✓ Заявка отмечена как выполненная', 'success');
+                markListNeedsRefresh();
                 // Сервер автоматически удаляет заявку из задач при выполнении
                 // Уведомляем другие вкладки/окна об изменении списка задач
                 try { localStorage.setItem('gkuop_task_update', Date.now().toString()); } catch (_) {}
@@ -225,6 +232,7 @@
                     if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                     showToast('🔵 Заявка добавлена в задачи', 'success');
                 }
+                markListNeedsRefresh();
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
@@ -236,6 +244,7 @@
                 const data = await fetchJSON(`/api/tickets/${ticketNumber}/archive`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('📦 Заявка отправлена в архив', 'success');
+                markListNeedsRefresh();
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
@@ -247,6 +256,7 @@
                 const data = await fetchJSON(`/api/tickets/${ticketNumber}/restore`, { method: 'POST' });
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('↩ Заявка восстановлена из архива', 'success');
+                markListNeedsRefresh();
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
@@ -718,11 +728,13 @@
             lbImages = [];
             cards.forEach((card, i) => {
                 const imgEl = card.querySelector('.preview-wrap img');
-                if (imgEl) {
+                const deleteBtn = card.querySelector('.delete-btn');
+                const imageId = deleteBtn?.getAttribute('onclick')?.match(/\d+/)?.[0] || '';
+                if (imgEl && imageId) {
                     lbImages.push({
-                        src: imgEl.src,
+                        src: `/api/images/${imageId}/download`,
                         alt: imgEl.alt,
-                        downloadUrl: `/api/images/${card.querySelector('.delete-btn')?.getAttribute('onclick')?.match(/\d+/)?.[0] || ''}/download`
+                        downloadUrl: `/api/images/${imageId}/download`
                     });
                 }
             });

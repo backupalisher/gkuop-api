@@ -589,14 +589,22 @@
             }
         });
 
-        // При возврате на страницу через history.back (bfcache) — перезагружаем задачи
+        // При возврате на страницу через history.back (bfcache)
         window.addEventListener('pageshow', function(e) {
             if (e.persisted) {
-                // Страница восстановлена из bfcache — обновляем данные
-                loadTaskNumbers().then(() => {
-                    loadTickets();
+                // Проверяем, были ли изменения на странице детального просмотра
+                const needsRefresh = sessionStorage.getItem('gkuop_list_needs_refresh');
+                if (needsRefresh) {
+                    // Данные были изменены (статус, архив, задачи) — перезагружаем список
+                    sessionStorage.removeItem('gkuop_list_needs_refresh');
+                    loadTaskNumbers().then(() => {
+                        loadTickets();
+                        loadTabCounts();
+                    });
+                } else {
+                    // Данные не менялись — просто обновляем счётчики в фоне
                     loadTabCounts();
-                });
+                }
             }
         });
     </script>

@@ -5,6 +5,7 @@
 - Генерация thumbnail/preview для всех поддерживаемых форматов
 - Генерация уникальных имён файлов
 - Кэширование превью
+- Сжатие изображений через ImageCompressor
 """
 import os
 import io
@@ -19,6 +20,10 @@ from typing import Optional, List, Tuple
 from PIL import Image
 
 from database.models import TicketImage
+from services.image_compressor import (
+    ImageCompressor, CompressionConfig as CompressorConfig,
+    CompressionPreset
+)
 
 logger = logging.getLogger(__name__)
 
@@ -66,10 +71,19 @@ class PreviewGenerationError(Exception):
 class ImageManager:
     """Менеджер для работы с файлами заявок"""
 
-    def __init__(self, upload_dir: str = 'uploads'):
+    def __init__(self, upload_dir: str = 'uploads',
+                 compression_config: Optional['CompressorConfig'] = None,
+                 compression_enabled: bool = True):
         self.upload_dir = Path(upload_dir)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"ImageManager инициализирован, директория: {self.upload_dir.absolute()}")
+        self.compression_enabled = compression_enabled
+        self.compressor = None
+        if compression_config:
+            self.compressor = ImageCompressor(compression_config)
+        logger.info(
+            f"ImageManager инициализирован, директория: {self.upload_dir.absolute()}, "
+            f"компрессия: {'вкл' if compression_enabled and self.compressor else 'выкл'}"
+        )
 
     def _get_ticket_dir(self, ticket_number: str) -> Path:
         """Получение директории для заявки"""
@@ -153,6 +167,7 @@ class ImageManager:
     def save_file(self, ticket_number: str, file_bytes: bytes,
                   original_filename: str, mime_type: str) -> TicketImage:
         """Сохранение файла на диск и создание preview/thumbnail.
+        Для изображений применяется сжатие через ImageCompressor.
         Возвращает объект TicketImage.
         """
         # Валидация
@@ -162,12 +177,34 @@ class ImageManager:
         filename = self._generate_filename(original_filename)
         file_path = ticket_dir / filename
 
-        # Сохраняем оригинал
-        with open(file_path, 'wb') as f:
-            f.write(file_bytes)
-
-        file_size = len(file_bytes)
         doc_type = self._get_document_type(mime_type, original_filename)
+        is_image = doc_type == 'image'
+
+        # Сжатие изображения (если включено и доступен компрессор)
+        compressed_bytes = file_bytes
+        compression_info = None
+        if is_image and self.compression_enabled and self.compressor is not None:
+            try:
+                source_ext = Path(original_filename).suffix.lower()
+                compressed_bytes, compression_info = self.compressor.compress_bytes(
+                    file_bytes, source_ext
+                )
+                saved_bytes = len(file_bytes) - len(compressed_bytes)
+                saved_pct = (1 - len(compressed_bytes) / len(file_bytes)) * 100
+                logger.info(
+                    f"Сжатие изображения {original_filename}: "
+                    f"{len(file_bytes)} → {len(compressed_bytes)} байт "
+                    f"({saved_pct:.1f}% экономии)"
+                )
+            except Exception as e:
+                logger.warning(f"Не удалось сжать изображение {original_filename}: {e}")
+                compressed_bytes = file_bytes
+
+        # Сохраняем файл (сжатый или оригинал)
+        with open(file_path, 'wb') as f:
+            f.write(compressed_bytes)
+
+        file_size = len(compressed_bytes)
         logger.info(f"Сохранён файл: {file_path} ({file_size} байт, тип: {doc_type})")
 
         # Создаём preview/thumbnail
