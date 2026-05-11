@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заявка #{{ ticket_number }} — ГКУ ОП Заявки</title>
     <link rel="stylesheet" href="/static/css/main.css">
+    <script src="/static/js/auth.js"></script>
 </head>
 <body>
     <!-- Оверлей авторизации -->
@@ -39,6 +40,12 @@
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
+            // Добавляем заголовок Authorization из auth.js, если доступен
+            const headers = { ...(options.headers || {}) };
+            if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+            }
+            options.headers = headers;
             const r = await fetch(url, options);
             if (!r.ok) {
                 const text = await r.text();
@@ -81,17 +88,36 @@
             const errorEl = document.getElementById('authError');
 
             try {
-                const data = await fetchJSON('/api/auth/login', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({login, password})
-                });
-                if (data.status === 'ok') {
-                    setAuth(data.username);
-                    showApp();
-                    errorEl.textContent = '';
+                // Используем новый механизм аутентификации из auth.js
+                if (typeof AUTH !== 'undefined' && typeof AUTH.login === 'function') {
+                    const result = await AUTH.login(login, password);
+                    if (result.success) {
+                        setAuth(result.user.username);
+                        showApp();
+                        errorEl.textContent = '';
+                        // Инициализируем PermissionGuard (применяет защиту + MutationObserver)
+                        if (typeof PermissionGuard !== 'undefined') {
+                            PermissionGuard.init();
+                        } else {
+                            setTimeout(applyPermissionUI, 100);
+                        }
+                    } else {
+                        errorEl.textContent = result.error || 'Неверный логин или пароль';
+                    }
                 } else {
-                    errorEl.textContent = data.message || 'Неверный логин или пароль';
+                    // Fallback на старый API
+                    const data = await fetchJSON('/api/auth/login', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({login, password})
+                    });
+                    if (data.status === 'ok') {
+                        setAuth(data.username);
+                        showApp();
+                        errorEl.textContent = '';
+                    } else {
+                        errorEl.textContent = data.message || 'Неверный логин или пароль';
+                    }
                 }
             } catch (e) {
                 errorEl.textContent = 'Ошибка соединения с сервером';
@@ -114,7 +140,7 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>Logged in as ' + auth.username + '<button class="auth-logout" onclick="handleLogout()">Выйти</button></span>';
+                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>Logged in as ' + auth.username + '</span>';
             }
         }
 
@@ -165,16 +191,16 @@
                         <h3>${title}</h3>
                         <p>${message}</p>
                         <div class="modal-actions">
-                            <button class="btn-cancel">${cancelText}</button>
-                            <button class="btn-confirm">${confirmText}</button>
+                            <button class="btn btn-ghost">${cancelText}</button>
+                            <button class="btn btn-primary">${confirmText}</button>
                         </div>
                     </div>
                 `;
-                overlay.querySelector('.btn-cancel').onclick = () => {
+                overlay.querySelector('.btn-ghost').onclick = () => {
                     overlay.remove();
                     resolve(false);
                 };
-                overlay.querySelector('.btn-confirm').onclick = () => {
+                overlay.querySelector('.btn-primary').onclick = () => {
                     overlay.remove();
                     resolve(true);
                 };
@@ -205,7 +231,9 @@
             try { sessionStorage.setItem('gkuop_list_needs_refresh', '1'); } catch (_) {}
         }
 
-        async function completeTicket() {
+        // ─── Защищённые функции (с проверкой прав через PermissionGuard) ──
+        // Оригинальные функции
+        async function _completeTicket() {
             const confirmed = await showModal('Выполнение заявки', 'Отметить заявку как выполненную?');
             if (!confirmed) return;
             try {
@@ -213,14 +241,13 @@
                 if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
                 showToast('✓ Заявка отмечена как выполненная', 'success');
                 markListNeedsRefresh();
-                // Сервер автоматически удаляет заявку из задач при выполнении
-                // Уведомляем другие вкладки/окна об изменении списка задач
                 try { localStorage.setItem('gkuop_task_update', Date.now().toString()); } catch (_) {}
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
+        const completeTicket = PermissionGuard.protectFunction(_completeTicket, 'complete_tickets');
 
-        async function toggleTask() {
+        async function _toggleTask() {
             try {
                 const checkData = await fetchJSON(`/api/tickets/${ticketNumber}/task`);
                 if (checkData.is_task) {
@@ -236,8 +263,9 @@
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
+        const toggleTask = PermissionGuard.protectFunction(_toggleTask, 'manage_tasks');
 
-        async function archiveTicket() {
+        async function _archiveTicket() {
             const confirmed = await showModal('Архивирование', 'Отправить заявку в архив?');
             if (!confirmed) return;
             try {
@@ -248,8 +276,9 @@
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
+        const archiveTicket = PermissionGuard.protectFunction(_archiveTicket, 'archive_tickets');
 
-        async function restoreTicket() {
+        async function _restoreTicket() {
             const confirmed = await showModal('Восстановление', 'Восстановить заявку из архива?');
             if (!confirmed) return;
             try {
@@ -260,6 +289,7 @@
                 loadTicket();
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
+        const restoreTicket = PermissionGuard.protectFunction(_restoreTicket, 'archive_tickets');
 
         const fieldLabels = {
             'subject': 'Тема',
@@ -335,19 +365,19 @@
                 html += `<div class="action-buttons">`;
                 // При возврате к списку используем history.back() если есть сохранённое состояние,
                 // иначе переходим на главную. Это позволяет восстановить позицию прокрутки и фильтры.
-                html += `<a href="/" class="btn-action btn-back" onclick="event.preventDefault(); goBackToList()">← Назад к списку</a>`;
+                html += `<a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад к списку</a>`;
                 html += `<span style="flex:1"></span>`;
                 if (!isArchived) {
                     // Кнопка "Задача 🔵" — показываем всегда, кроме случаев когда заявка уже назначена
                     const assignedTo = (s.assigned_to || '').trim();
                     if (!assignedTo) {
                         const isTask = s._is_task === true;
-                        html += `<button class="btn-action btn-task ${isTask ? 'active' : ''}" onclick="toggleTask()">${isTask ? '✅ Задача' : '🔵 Задача'}</button>`;
+                        html += `<button class="btn btn-action btn-task ${isTask ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTask()">${isTask ? '✅ Задача' : '🔵 Задача'}</button>`;
                     }
-                    html += `<button class="btn-action btn-complete" onclick="completeTicket()">✓ Выполнено</button>`;
-                    html += `<button class="btn-action btn-archive" onclick="archiveTicket()">📦 В архив</button>`;
+                    html += `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
+                    html += `<button class="btn btn-action btn-archive" data-permission="archive_tickets" onclick="archiveTicket()">📦 В архив</button>`;
                 } else {
-                    html += `<button class="btn-action btn-restore" onclick="restoreTicket()">↩ Восстановить</button>`;
+                    html += `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">↩ Восстановить</button>`;
                 }
                 html += `</div>`;
 
@@ -474,7 +504,7 @@
                                 <img src="${thumbUrl}" alt="${img.original_filename}" loading="lazy" class="${isImage ? '' : 'contain'}"
                                     onerror="this.parentElement.innerHTML='<div class=\\'doc-icon\\'>📄</div>'">
                             </div>
-                            <button class="delete-btn" onclick="deleteImage(${img.id})" title="Удалить">✕</button>
+                            <button class="delete-btn" data-permission="delete_images" onclick="deleteImage(${img.id})" title="Удалить">✕</button>
                             <div class="image-info">
                                 <div class="filename" title="${img.original_filename}">${img.original_filename}</div>
                                 <div class="file-meta">
@@ -489,9 +519,9 @@
                     html += `<div style="color: var(--color-text-muted); font-size: var(--font-size-base);">Нет прикреплённых файлов</div>`;
                 }
 
-                // Форма загрузки
+                // Форма загрузки (только для upload_images)
                 if (!isArchived) {
-                    html += `<div class="upload-area" id="uploadArea"
+                    html += `<div class="upload-area" id="uploadArea" data-permission="upload_images"
                         onclick="document.getElementById('fileInput').click()">
                         <input type="file" id="fileInput"
                             accept="image/jpeg,image/png,image/gif,application/pdf,.docx,.xlsx,text/plain,.txt"
@@ -633,18 +663,18 @@
                             <span style="color:var(--color-text-secondary);font-size:var(--font-size-sm);">${(file.size / 1024).toFixed(1)} КБ</span>
                         </div>
                         <div class="preview-actions">
-                            <button class="btn-cancel">Отмена</button>
-                            <button class="btn-confirm">Загрузить (${allFiles.length})</button>
+                            <button class="btn btn-ghost">Отмена</button>
+                            <button class="btn btn-primary">Загрузить (${allFiles.length})</button>
                         </div>
                     </div>
                 `;
                 overlay._files = allFiles;
-                const btn = overlay.querySelector('.btn-confirm');
+                const btn = overlay.querySelector('.btn-primary');
                 btn.onclick = function() {
                     overlay.remove();
                     doUploadFiles(overlay._files);
                 };
-                overlay.querySelector('.btn-cancel').onclick = () => overlay.remove();
+                overlay.querySelector('.btn-ghost').onclick = () => overlay.remove();
                 document.body.appendChild(overlay);
             };
             reader.readAsDataURL(file);
@@ -679,7 +709,7 @@
 
                 let msg = '';
                 if (result.uploaded && result.uploaded.length > 0) {
-                    msg += `✅ Загружено: ${result.uploaded.length}`;
+                    msg += `Загружено: ${result.uploaded.length}`;
                 }
                 if (result.errors && result.errors.length > 0) {
                     msg += ` ⚠️ Ошибок: ${result.errors.length}`;
@@ -691,28 +721,28 @@
 
                 const isError = result.errors && result.errors.length > 0 && (!result.uploaded || result.uploaded.length === 0);
                 progress.className = isError ? 'upload-progress error' : 'upload-progress success';
-                progress.textContent = msg || '❌ Не удалось загрузить файлы';
+                progress.textContent = msg || 'Не удалось загрузить файлы';
 
                 if (!isError) {
-                    showToast(`✅ Загружено ${result.uploaded.length} файлов`, 'success');
+                    showToast(`Загружено ${result.uploaded.length} файлов`, 'success');
                 }
 
                 setTimeout(() => loadTicket(), 500);
             } catch (e) {
                 progress.className = 'upload-progress error';
-                progress.textContent = `❌ Ошибка: ${e.message}`;
+                progress.textContent = `Ошибка: ${e.message}`;
                 showToast('Ошибка загрузки: ' + e.message, 'error');
             }
         }
 
-        // ─── Удаление файла ─────────────────────────────────────────
-        async function deleteImage(imageId) {
+        // ─── Удаление файла (защищено PermissionGuard) ──────────────
+        async function _deleteImage(imageId) {
             const confirmed = await showModal('Удаление файла', 'Удалить этот файл?');
             if (!confirmed) return;
             try {
                 const result = await fetchJSON(`/api/images/${imageId}`, { method: 'DELETE' });
                 if (result.status === 'ok') {
-                    showToast('✅ Файл удалён', 'success');
+                    showToast('Файл удалён', 'success');
                     loadTicket();
                 } else {
                     showToast('Ошибка удаления: ' + (result.error || 'неизвестная ошибка'), 'error');
@@ -721,6 +751,7 @@
                 showToast('Ошибка удаления: ' + e.message, 'error');
             }
         }
+        const deleteImage = PermissionGuard.protectFunction(_deleteImage, 'delete_images');
 
         // ─── Lightbox ───────────────────────────────────────────────
         function openLightbox(index) {
@@ -763,9 +794,9 @@
             };
 
             lb.innerHTML = `
-                <button class="lb-close" onclick="closeLightbox()">✕</button>
-                ${lbImages.length > 1 ? `<button class="lb-nav lb-prev" onclick="navigateLightbox(-1)">‹</button>
-                <button class="lb-nav lb-next" onclick="navigateLightbox(1)">›</button>` : ''}
+                <button class="lb-close" onclick="closeLightbox()">❌</button>
+                ${lbImages.length > 1 ? `<button class="lb-nav lb-prev" onclick="navigateLightbox(-1)">❮</button>
+                <button class="lb-nav lb-next" onclick="navigateLightbox(1)">❯</button>` : ''}
                 <div class="lb-content" id="lbContent">
                     <img src="${img.src}" alt="${img.alt}" id="lbImage"
                         ondblclick="toggleZoom()"
@@ -916,11 +947,19 @@
             lbImages = [];
         }
 
-        // ─── Инициализация drag-and-drop после загрузки ─────────────
+        // ─── Инициализация drag-and-drop и permission UI после загрузки ─
         const origLoadTicket = loadTicket;
         loadTicket = async function() {
             await origLoadTicket.call(this);
             setTimeout(setupDragDrop, 100);
+            // PermissionGuard.apply() обработает динамически добавленные элементы
+            setTimeout(() => {
+                if (typeof PermissionGuard !== 'undefined') {
+                    PermissionGuard.apply();
+                } else {
+                    applyPermissionUI();
+                }
+            }, 150);
         };
     </script>
 </body>

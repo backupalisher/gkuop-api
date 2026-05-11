@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ГКУ ОП Заявки</title>
     <link rel="stylesheet" href="/static/css/main.css">
+    <script src="/static/js/auth.js"></script>
     <style>
         /* Минимальные специфичные стили только для index.html */
     </style>
@@ -24,8 +25,19 @@
         <h1>ГКУ ОП <span>Заявки</span></h1>
         <div id="authIndicator" class="header-actions" style="display:none">
             <span class="auth-indicator"></span>
-            <button class="btn btn-rebuild" onclick="rebuildDatabase()" id="rebuildBtn">⟳ Обновить данные</button>
-            <button class="btn btn-logout" onclick="handleLogout()">Выйти</button>
+<!--            <button class="btn btn-danger" onclick="handleLogout()">🚪 Выйти</button>-->
+            <button id="hamburgerBtn" class="btn btn-danger" aria-label="Меню" onclick="toggleHamburgerMenu()">☰</button>
+            <div id="hamburgerMenu" class="hamburger-menu">
+                <a href="#" class="nav-link" data-page="users" data-role="admin" onclick="event.preventDefault(); toggleHamburgerMenu(); openUsersModal();">
+                    <span class="menu-icon">👥</span> Пользователи
+                </a>
+                <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshData(); toggleHamburgerMenu();">
+                    <span class="menu-icon">⟳</span> Обновить данные
+                </a>
+                <a href="#" class="nav-link" onclick="handleLogout(); toggleHamburgerMenu();">
+                    <span class="menu-icon">🚪</span>Выйти
+                </a>
+            </div>
         </div>
     </div>
 
@@ -74,6 +86,8 @@
             </table>
             <div class="pagination" id="pagination"></div>
         </div>
+
+
     </div>
 
     <script>
@@ -82,6 +96,12 @@
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
+            // Добавляем заголовок Authorization из auth.js, если доступен
+            const headers = { ...(options.headers || {}) };
+            if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+            }
+            options.headers = headers;
             const r = await fetch(url, options);
             if (!r.ok) {
                 const text = await r.text();
@@ -119,6 +139,13 @@
 
         async function handleLogin(event) {
             event.preventDefault();
+
+            // Используем новый механизм аутентификации из auth.js
+            if (typeof handleLoginV2 === 'function') {
+                return handleLoginV2(event);
+            }
+
+            // Fallback на старый механизм (если auth.js не загрузился)
             const login = document.getElementById('authLogin').value.trim();
             const password = document.getElementById('authPassword').value.trim();
             const errorEl = document.getElementById('authError');
@@ -144,12 +171,43 @@
 
         function handleLogout() {
             clearAuth();
+            // Очищаем AUTH из auth.js
+            if (typeof AUTH !== 'undefined' && AUTH.logout) {
+                AUTH.logout();
+            }
+            // Очищаем старый ключ для совместимости с ticket_detail.html
+            try { sessionStorage.removeItem('gkuop_auth'); } catch (e) { /* ignore */ }
             document.getElementById('authOverlay').style.display = 'flex';
             document.getElementById('authIndicator').style.display = 'none';
             document.getElementById('authLogin').value = '';
             document.getElementById('authPassword').value = '';
             document.getElementById('authError').textContent = '';
         }
+
+        // ─── Hamburger menu ────────────────────────────────
+        function toggleHamburgerMenu() {
+            const menu = document.getElementById('hamburgerMenu');
+            if (menu) {
+                menu.classList.toggle('open');
+            }
+        }
+
+        function refreshData() {
+            if (typeof rebuildDatabase === 'function') {
+                rebuildDatabase();
+            } else {
+                loadTickets();
+            }
+        }
+
+        // Закрываем hamburger menu при клике вне его
+        document.addEventListener('click', function(e) {
+            const menu = document.getElementById('hamburgerMenu');
+            const btn = document.getElementById('hamburgerBtn');
+            if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+                menu.classList.remove('open');
+            }
+        });
 
         function showApp() {
             document.getElementById('authOverlay').style.display = 'none';
@@ -158,6 +216,13 @@
             if (auth) {
                 indicator.style.display = 'flex';
                 indicator.querySelector('.auth-indicator').textContent = auth.username;
+            }
+            // Применяем permission UI если auth.js загружен
+            if (typeof applyPermissionUI === 'function') {
+                setTimeout(applyPermissionUI, 100);
+            }
+            if (typeof updateUsersTabVisibility === 'function') {
+                setTimeout(updateUsersTabVisibility, 150);
             }
         }
 
@@ -262,16 +327,16 @@
                         <h3>${title}</h3>
                         <p>${message}</p>
                         <div class="modal-actions">
-                            <button class="btn-cancel">${cancelText}</button>
-                            <button class="btn-confirm">${confirmText}</button>
+                            <button class="btn btn-ghost">${cancelText}</button>
+                            <button class="btn btn-primary">${confirmText}</button>
                         </div>
                     </div>
                 `;
-                overlay.querySelector('.btn-cancel').onclick = () => {
+                overlay.querySelector('.btn-ghost').onclick = () => {
                     overlay.remove();
                     resolve(false);
                 };
-                overlay.querySelector('.btn-confirm').onclick = () => {
+                overlay.querySelector('.btn-primary').onclick = () => {
                     overlay.remove();
                     resolve(true);
                 };
@@ -305,6 +370,8 @@
             document.getElementById('tabActive').classList.toggle('active', tab === 'active');
             document.getElementById('tabTasks').classList.toggle('active', tab === 'tasks');
             document.getElementById('tabArchived').classList.toggle('active', tab === 'archived');
+
+            document.querySelector('.table-wrap').style.display = '';
             loadTickets();
         }
 
@@ -368,7 +435,7 @@
             return taskNumbers.includes(ticketNumber);
         }
 
-        async function toggleTaskFromList(ticketNumber, event) {
+        async function _toggleTaskFromList(ticketNumber, event) {
             event.preventDefault();
             event.stopPropagation();
             try {
@@ -379,7 +446,6 @@
                     await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'POST' });
                     showToast('🔵 Заявка добавлена в задачи', 'success');
                 }
-                // Обновляем список задач и перезагружаем текущую вкладку
                 await loadTaskNumbers();
                 loadTickets();
                 loadTabCounts();
@@ -387,6 +453,7 @@
                 showToast('Ошибка: ' + e.message, 'error');
             }
         }
+        const toggleTaskFromList = PermissionGuard.protectFunction(_toggleTaskFromList, 'manage_tasks');
 
         async function loadTickets() {
             const search = document.getElementById('searchInput').value;
@@ -439,7 +506,7 @@
                     tbody.innerHTML = data.tickets.map((t, idx) => {
                         const inTasks = isInTasks(t.ticket_number);
                         const taskBtn = (currentTab === 'active')
-                            ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
+                            ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
                         return `<tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
                             <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
@@ -474,7 +541,7 @@
                 return;
             }
             let html = '';
-            html += `<button class="page-btn" onclick="goPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>‹</button>`;
+            html += `<button class="page-btn" onclick="goPage(${currentPage - 1})" ${currentPage <= 1 ? 'disabled' : ''}>❬</button>`;
             for (let p = 1; p <= data.total_pages; p++) {
                 if (p === 1 || p === data.total_pages || Math.abs(p - currentPage) <= 2) {
                     html += `<button class="page-btn ${p === currentPage ? 'active' : ''}" onclick="goPage(${p})">${p}</button>`;
@@ -482,7 +549,7 @@
                     html += '<span class="page-ellipsis">…</span>';
                 }
             }
-            html += `<button class="page-btn" onclick="goPage(${currentPage + 1})" ${currentPage >= data.total_pages ? 'disabled' : ''}>›</button>`;
+            html += `<button class="page-btn" onclick="goPage(${currentPage + 1})" ${currentPage >= data.total_pages ? 'disabled' : ''}>❭</button>`;
             el.innerHTML = html;
         }
 
@@ -507,16 +574,13 @@
             loadTickets();
         }
 
-        async function rebuildDatabase() {
+        async function _rebuildDatabase() {
             const confirmed = await showModal(
                 'Обновление данных',
                 'Обработать новые письма из почты? Это может занять некоторое время.'
             );
             if (!confirmed) return;
 
-            const btn = document.getElementById('rebuildBtn');
-            btn.disabled = true;
-            btn.textContent = '⟳ Обновление...';
             showError('');
 
             try {
@@ -534,11 +598,9 @@
             } catch (e) {
                 showError('Ошибка соединения: ' + e.message);
                 showToast('Ошибка соединения: ' + e.message, 'error');
-            } finally {
-                btn.disabled = false;
-                btn.textContent = '⟳ Обновить данные';
             }
         }
+        const rebuildDatabase = PermissionGuard.protectFunction(_rebuildDatabase, 'rebuild_data');
 
         function showError(msg) {
             const el = document.getElementById('errorMsg');
@@ -567,6 +629,11 @@
         const auth = getAuth();
         if (auth) {
             showApp();
+            // Применяем permission UI после загрузки auth.js
+            setTimeout(() => {
+                if (typeof applyPermissionUI === 'function') applyPermissionUI();
+                if (typeof updateUsersTabVisibility === 'function') updateUsersTabVisibility();
+            }, 200);
         }
 
         loadTabCounts();
@@ -607,6 +674,102 @@
                 }
             }
         });
+
+        // ─── Модальное окно управления пользователями ─────────
+        function openUsersModal() {
+            // Создаём overlay с автоматическим z-index
+            const overlay = typeof createModalOverlay === 'function'
+                ? createModalOverlay()
+                : (() => { const el = document.createElement('div'); el.className = 'modal-overlay'; return el; })();
+
+            // Создаём контейнер модального окна
+            const modal = document.createElement('div');
+            modal.className = 'modal modal-users';
+
+            // Заголовок
+            const header = document.createElement('div');
+            header.className = 'modal-users-header';
+            header.innerHTML = '<h3 style="margin:0">👥 Управление пользователями</h3>';
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'modal-users-close';
+            closeBtn.innerHTML = '✕';
+            closeBtn.onclick = () => overlay.remove();
+            header.appendChild(closeBtn);
+            modal.appendChild(header);
+
+            // Контент
+            const content = document.createElement('div');
+            content.className = 'modal-users-content';
+
+            // Кнопка "Добавить пользователя" (только для admin)
+            const toolbar = document.createElement('div');
+            toolbar.className = 'modal-users-toolbar';
+            const addBtn = document.createElement('button');
+            addBtn.className = 'btn btn-primary';
+            addBtn.setAttribute('data-permission', 'manage_users');
+            addBtn.innerHTML = '➕ Добавить пользователя';
+            addBtn.onclick = () => UserUI.openCreateModal();
+            toolbar.appendChild(addBtn);
+            content.appendChild(toolbar);
+
+            // Таблица пользователей
+            const tableWrap = document.createElement('div');
+            tableWrap.id = 'usersTableContainer';
+            tableWrap.innerHTML = '<p class="loading">Загрузка пользователей...</p>';
+            content.appendChild(tableWrap);
+            modal.appendChild(content);
+
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            // Закрытие по клику вне модального окна
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) overlay.remove();
+            });
+
+            // Загружаем данные
+            UserManager.getUsers()
+                .then(users => {
+                    const container = document.getElementById('usersTableContainer');
+                    if (!container) return;
+                    const table = UserUI.createUsersTable(users);
+                    container.innerHTML = '';
+                    container.appendChild(table);
+                    // Применяем права к динамически добавленным элементам
+                    if (typeof applyPermissionUI === 'function') {
+                        setTimeout(applyPermissionUI, 50);
+                    }
+                })
+                .catch(err => {
+                    const container = document.getElementById('usersTableContainer');
+                    if (container) {
+                        container.innerHTML = `<p class="error-msg">Ошибка загрузки: ${escapeHtml(err.message)}</p>`;
+                    }
+                });
+        }
+
+        // Показываем пункт "Пользователи" в hamburger меню только для admin
+        function updateUsersTabVisibility() {
+            // Видимость пункта "Пользователи" управляется через PermissionUI.apply()
+            // с атрибутом data-role="admin" на ссылке в гамбургер-меню
+        }
+
+        // Дополняем showApp для инициализации auth.js
+        const origShowApp = showApp;
+        showApp = function() {
+            origShowApp();
+            // Инициализируем AUTH из auth.js
+            if (typeof AUTH !== 'undefined' && AUTH.init) {
+                AUTH.init();
+            }
+            // Показываем вкладку пользователей если admin
+            updateUsersTabVisibility();
+            // Применяем data-permission атрибуты
+            if (typeof applyPermissionUI === 'function') {
+                setTimeout(applyPermissionUI, 100);
+            }
+        };
     </script>
 </body>
 </html>

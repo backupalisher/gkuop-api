@@ -9,6 +9,7 @@ from pathlib import Path
 from datetime import datetime
 from contextlib import asynccontextmanager
 from typing import List, Optional
+from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
 
@@ -429,6 +430,7 @@ async def api_get_ticket(ticket_number: str):
 
 
 @app.put("/api/tickets/{ticket_number}")
+@require_permission(Permission.EDIT_TICKETS)
 async def api_update_ticket(ticket_number: str, request: Request):
     """Обновить заявку через API (ручное редактирование оператором)"""
     if not db:
@@ -515,6 +517,7 @@ async def api_update_ticket(ticket_number: str, request: Request):
 
 
 @app.post("/api/tickets/{ticket_number}/complete")
+@require_permission(Permission.COMPLETE_TICKETS)
 async def api_complete_ticket(ticket_number: str, request: Request):
     """Отметить заявку как выполненную (статус = 'Выполнено').
     Опционально принимает multipart/form-data с файлами (images).
@@ -605,7 +608,8 @@ async def api_complete_ticket(ticket_number: str, request: Request):
 
 
 @app.post("/api/tickets/{ticket_number}/archive")
-async def api_archive_ticket(ticket_number: str):
+@require_permission(Permission.ARCHIVE_TICKETS)
+async def api_archive_ticket(ticket_number: str, request: Request):
     """Архивировать заявку (is_archived = TRUE)"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -628,7 +632,8 @@ async def api_archive_ticket(ticket_number: str):
 
 
 @app.post("/api/tickets/{ticket_number}/restore")
-async def api_restore_ticket(ticket_number: str):
+@require_permission(Permission.ARCHIVE_TICKETS)
+async def api_restore_ticket(ticket_number: str, request: Request):
     """Восстановить заявку из архива (is_archived = FALSE)"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -660,7 +665,8 @@ async def api_restore_ticket(ticket_number: str):
 
 
 @app.post("/api/tickets/{ticket_number}/task")
-async def api_add_task(ticket_number: str):
+@require_permission(Permission.MANAGE_TASKS)
+async def api_add_task(ticket_number: str, request: Request):
     """Добавить заявку в список задач"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -676,7 +682,8 @@ async def api_add_task(ticket_number: str):
 
 
 @app.delete("/api/tickets/{ticket_number}/task")
-async def api_remove_task(ticket_number: str):
+@require_permission(Permission.MANAGE_TASKS)
+async def api_remove_task(ticket_number: str, request: Request):
     """Удалить заявку из списка задач"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -894,11 +901,19 @@ async def api_download_image(image_id: int, request: Request):
         filename = image_record['original_filename']
         ext = Path(filename).suffix.lower()
 
+        # RFC 5987: для не-ASCII имён используем filename*=UTF-8''...
+        try:
+            filename.encode('ascii')
+            # ASCII-имя — можно использовать filename= напрямую
+            ascii_filename = filename
+        except (UnicodeEncodeError, UnicodeDecodeError):
+            # Не-ASCII — кодируем через percent-encoding для RFC 5987
+            ascii_filename = 'file' + ext
+
         # Для изображений — inline, для документов — attachment
-        if ext in ('.jpg', '.jpeg', '.png', '.gif'):
-            disposition = f'inline; filename="{filename}"'
-        else:
-            disposition = f'attachment; filename="{filename}"'
+        filename_part = f'filename="{ascii_filename}"; filename*=UTF-8\'\'{quote(filename)}'
+        disposition_type = 'inline' if ext in ('.jpg', '.jpeg', '.png', '.gif') else 'attachment'
+        disposition = f'{disposition_type}; {filename_part}'
 
         # ETag для кэширования
         etag = image_manager.get_file_etag(image_record['file_path'])
@@ -981,7 +996,8 @@ async def api_get_thumbnail(image_id: int, request: Request):
 
 
 @app.delete("/api/images/{image_id}")
-async def api_delete_image(image_id: int):
+@require_permission(Permission.DELETE_IMAGES)
+async def api_delete_image(image_id: int, request: Request):
     """Удалить изображение (мягкое удаление)"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
