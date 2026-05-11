@@ -38,6 +38,11 @@ class DatabaseConfig:
     database: str
     user: str
     password: str
+    pool_min_connections: int = 1
+    pool_max_connections: int = 10
+    retry_max_attempts: int = 3
+    retry_base_delay: float = 0.5
+    slow_query_threshold_ms: float = 500.0
 
     @classmethod
     def from_env(cls):
@@ -47,7 +52,12 @@ class DatabaseConfig:
             port=int(os.getenv('DB_PORT', 5432)),
             database=os.getenv('DB_NAME', 'ticket_system'),
             user=os.getenv('DB_USER', 'postgres'),
-            password=os.getenv('DB_PASSWORD', '')
+            password=os.getenv('DB_PASSWORD', ''),
+            pool_min_connections=int(os.getenv('DB_POOL_MIN', '1')),
+            pool_max_connections=int(os.getenv('DB_POOL_MAX', '10')),
+            retry_max_attempts=int(os.getenv('DB_RETRY_MAX_ATTEMPTS', '3')),
+            retry_base_delay=float(os.getenv('DB_RETRY_BASE_DELAY', '0.5')),
+            slow_query_threshold_ms=float(os.getenv('DB_SLOW_QUERY_THRESHOLD_MS', '500.0')),
         )
 
 

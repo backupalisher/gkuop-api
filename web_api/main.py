@@ -24,6 +24,8 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 
 from psycopg2.sql import SQL, Identifier
@@ -97,6 +99,22 @@ async def lifespan(app: FastAPI):
     # Инициализация модуля аутентификации
     auth_db = AuthDBManager(db)
     auth_db.create_tables()
+
+    # Восстановление sequence user_permissions_id_seq при старте
+    try:
+        auth_db.db.cursor.execute(
+            "SELECT setval('user_permissions_id_seq', "
+            "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
+        )
+        auth_db.db.connection.commit()
+        logger.info("Sequence user_permissions_id_seq восстановлен при старте")
+    except Exception as seq_err:
+        logger.warning(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+        try:
+            auth_db.db.connection.rollback()
+        except Exception:
+            pass
+
     app.state.auth_db = auth_db
     print("🔐 Модуль аутентификации инициализирован")
 
@@ -154,17 +172,22 @@ app = FastAPI(
 )
 
 # CORS middleware (разрешаем запросы с любых источников для production за Nginx)
+# ВАЖНО: allow_origins=["*"] и allow_credentials=True несовместимы по спецификации CORS.
+# Если нужны credentials, указываем конкретные origins.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Middleware аутентификации
-from starlette.middleware.base import BaseHTTPMiddleware
-app.add_middleware(BaseHTTPMiddleware, dispatch=AuthMiddleware())
+# Auth middleware (проверка Bearer-токенов)
+# Регистрируем после CORS, чтобы preflight-запросы OPTIONS не блокировались
+app.add_middleware(
+    BaseHTTPMiddleware,
+    dispatch=AuthMiddleware(),
+)
 
 # Шаблоны
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -176,10 +199,6 @@ if os.path.isdir(static_dir):
 
 # Подключаем роутер аутентификации
 app.include_router(auth_router)
-
-# Middleware аутентификации (добавляется после всех middleware)
-from starlette.middleware.base import BaseHTTPMiddleware
-app.add_middleware(BaseHTTPMiddleware, dispatch=AuthMiddleware())
 
 # ─── Middleware для отслеживания запросов ──────────────────────────
 
@@ -783,6 +802,8 @@ async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(.
     """Загрузить одно или несколько изображений для заявки"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    if not image_manager:
+        return JSONResponse({"error": "Менеджер изображений не инициализирован"}, status_code=503)
 
     try:
         # Проверяем существование заявки
@@ -836,6 +857,10 @@ async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(.
                     })
                     logger.info(f"Загружено изображение #{image_id} для заявки {ticket_number}")
                 else:
+                    logger.error(
+                        f"Не удалось сохранить запись в БД для файла {file.filename} "
+                        f"(заявка {ticket_number}, путь: {ticket_image.file_path})"
+                    )
                     errors.append({"file": file.filename, "error": "Не удалось сохранить запись в БД"})
             except ImageValidationError as e:
                 errors.append({"file": file.filename, "error": str(e)})

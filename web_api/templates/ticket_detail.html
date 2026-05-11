@@ -77,7 +77,20 @@
                 const preview = text.slice(0, 200);
                 throw new Error(`HTTP ${r.status}: ${preview}`);
             }
-            return r.json();
+            // Проверяем Content-Type перед парсингом JSON
+            const contentType = r.headers.get('content-type') || '';
+            if (!contentType.includes('application/json') && !contentType.includes('application/problem+json')) {
+                const text = await r.text();
+                const preview = text.slice(0, 200);
+                throw new Error(`Неожиданный Content-Type: ${contentType}. Ответ: ${preview}`);
+            }
+            try {
+                return await r.json();
+            } catch (e) {
+                const text = await r.text();
+                const preview = text.slice(0, 200);
+                throw new Error(`Ошибка парсинга JSON: ${e.message}. Ответ: ${preview}`);
+            }
         }
 
         function getAuth() {

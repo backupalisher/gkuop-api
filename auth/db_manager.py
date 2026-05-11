@@ -7,6 +7,8 @@ import logging
 from datetime import datetime
 from typing import Optional, List, Dict, Any
 
+from psycopg2.sql import SQL, Identifier
+
 from .models import (
     User, UserRole, Permission, UserPermission,
     DEFAULT_ROLE_PERMISSIONS
@@ -195,6 +197,21 @@ class AuthDBManager:
         except Exception as e:
             logger.error(f"✗ Ошибка создания пользователя {username}: {e}")
             self.db.connection.rollback()
+            # Автоматическое восстановление sequence при duplicate key
+            if 'duplicate key' in str(e).lower() and 'users_pkey' in str(e):
+                try:
+                    self.db.cursor.execute(
+                        "SELECT setval('users_id_seq', "
+                        "COALESCE((SELECT MAX(id) FROM users), 0) + 1, false)"
+                    )
+                    self.db.connection.commit()
+                    logger.info("Sequence users_id_seq восстановлен после duplicate key")
+                except Exception as seq_err:
+                    logger.error(f"Не удалось восстановить sequence users: {seq_err}")
+                    try:
+                        self.db.connection.rollback()
+                    except Exception:
+                        pass
             return None
 
     def get_user(self, username: str) -> Optional[User]:
@@ -249,13 +266,13 @@ class AuthDBManager:
             set_parts = []
             values = []
             for key, value in filtered.items():
-                set_parts.append(f"{key} = %s")
+                set_parts.append(SQL("{} = %s").format(Identifier(key)))
                 values.append(value)
 
-            set_parts.append("updated_at = CURRENT_TIMESTAMP")
+            set_parts.append(SQL("updated_at = CURRENT_TIMESTAMP"))
             values.append(username)
 
-            query = f"UPDATE users SET {', '.join(set_parts)} WHERE username = %s"
+            query = SQL("UPDATE users SET {} WHERE username = %s").format(SQL(", ").join(set_parts))
             self.db.cursor.execute(query, values)
             self.db.connection.commit()
 
@@ -355,6 +372,21 @@ class AuthDBManager:
         except Exception as e:
             logger.error(f"✗ Ошибка назначения разрешений для {username}: {e}")
             self.db.connection.rollback()
+            # Автоматическое восстановление sequence при duplicate key
+            if 'duplicate key' in str(e).lower() and 'user_permissions_pkey' in str(e):
+                try:
+                    self.db.cursor.execute(
+                        "SELECT setval('user_permissions_id_seq', "
+                        "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
+                    )
+                    self.db.connection.commit()
+                    logger.info("Sequence user_permissions_id_seq восстановлен после duplicate key")
+                except Exception as seq_err:
+                    logger.error(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+                    try:
+                        self.db.connection.rollback()
+                    except Exception:
+                        pass
 
     def get_user_permissions(self, username: str) -> List[str]:
         """Получение списка разрешений пользователя (коды)"""
@@ -403,6 +435,21 @@ class AuthDBManager:
         except Exception as e:
             logger.error(f"✗ Ошибка установки разрешения {permission_code} для {username}: {e}")
             self.db.connection.rollback()
+            # Автоматическое восстановление sequence при duplicate key
+            if 'duplicate key' in str(e).lower() and 'user_permissions_pkey' in str(e):
+                try:
+                    self.db.cursor.execute(
+                        "SELECT setval('user_permissions_id_seq', "
+                        "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
+                    )
+                    self.db.connection.commit()
+                    logger.info("Sequence user_permissions_id_seq восстановлен после duplicate key")
+                except Exception as seq_err:
+                    logger.error(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+                    try:
+                        self.db.connection.rollback()
+                    except Exception:
+                        pass
             return False
 
     def set_user_permissions_bulk(self, username: str, permissions: Dict[str, bool]) -> bool:
@@ -426,6 +473,21 @@ class AuthDBManager:
         except Exception as e:
             logger.error(f"✗ Ошибка массового обновления разрешений для {username}: {e}")
             self.db.connection.rollback()
+            # Автоматическое восстановление sequence при duplicate key
+            if 'duplicate key' in str(e).lower() and 'user_permissions_pkey' in str(e):
+                try:
+                    self.db.cursor.execute(
+                        "SELECT setval('user_permissions_id_seq', "
+                        "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
+                    )
+                    self.db.connection.commit()
+                    logger.info("Sequence user_permissions_id_seq восстановлен после duplicate key")
+                except Exception as seq_err:
+                    logger.error(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+                    try:
+                        self.db.connection.rollback()
+                    except Exception:
+                        pass
             return False
 
     def reset_user_permissions_to_role(self, username: str) -> bool:

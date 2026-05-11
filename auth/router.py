@@ -387,6 +387,16 @@ async def api_update_user_permissions(username: str, request: Request):
     if not isinstance(permissions, dict):
         return JSONResponse({"error": "Поле permissions должно быть объектом {code: bool}"}, status_code=400)
 
+    # Проверяем, что все коды разрешений существуют в каталоге
+    catalog = auth_db.get_all_permissions_catalog()
+    valid_codes = {p['code'] for p in catalog}
+    invalid_codes = [code for code in permissions if code not in valid_codes]
+    if invalid_codes:
+        return JSONResponse(
+            {"error": f"Неизвестные коды разрешений: {', '.join(invalid_codes)}"},
+            status_code=400
+        )
+
     if auth_db.set_user_permissions_bulk(username, permissions):
         updated_permissions = auth_db.get_user_permissions_detailed(username)
         return {
