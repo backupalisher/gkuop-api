@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Заявка #{{ ticket_number }} — ГКУ ОП Заявки</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css">
     <script src="/static/js/auth.js"></script>
 </head>
@@ -27,6 +28,12 @@
         <!-- Контейнер для тостов -->
         <div class="toast-container" id="toastContainer"></div>
 
+        <!-- Оверлей загрузки -->
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">Обновление данных…</div>
+        </div>
+
         <div id="content">
             <div class="loading">Загрузка...</div>
         </div>
@@ -37,6 +44,24 @@
 
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
+
+        // ─── Индикатор загрузки ──────────────────────────────
+        let _isLoading = false;
+
+        function showLoading(text) {
+            if (_isLoading) return;
+            _isLoading = true;
+            const overlay = document.getElementById('loadingOverlay');
+            const textEl = document.getElementById('loadingText');
+            if (textEl && text) textEl.textContent = text;
+            if (overlay) overlay.classList.add('active');
+        }
+
+        function hideLoading() {
+            _isLoading = false;
+            const overlay = document.getElementById('loadingOverlay');
+            if (overlay) overlay.classList.remove('active');
+        }
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
@@ -105,13 +130,24 @@
                         errorEl.textContent = result.error || 'Неверный логин или пароль';
                     }
                 } else {
-                    // Fallback на старый API
+                    // Fallback на новый API аутентификации
                     const data = await fetchJSON('/api/auth/login', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({login, password})
+                        body: JSON.stringify({username: login, password})
                     });
                     if (data.status === 'ok') {
+                        // Сохраняем токен, если он есть
+                        if (data.token) {
+                            try {
+                                sessionStorage.setItem('gkuop_auth_v2', JSON.stringify({
+                                    user: data.user,
+                                    token: data.token,
+                                    permissions: data.permissions || [],
+                                    timestamp: Date.now()
+                                }));
+                            } catch (e) { /* ignore */ }
+                        }
                         setAuth(data.username);
                         showApp();
                         errorEl.textContent = '';
@@ -334,6 +370,7 @@
         }
 
         async function loadTicket() {
+            showLoading('Загрузка заявки…');
             try {
                 const [data, taskData] = await Promise.all([
                     fetchJSON(`/api/tickets/${ticketNumber}`),
@@ -595,6 +632,8 @@
             } catch (e) {
                 document.getElementById('content').innerHTML =
                     `<div class="error">Ошибка загрузки: ${e.message}</div>`;
+            } finally {
+                hideLoading();
             }
         }
 

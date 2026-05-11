@@ -45,7 +45,8 @@ async def api_login_new(request: Request):
     except Exception:
         return JSONResponse({"status": "error", "message": "Неверный формат JSON"}, status_code=400)
 
-    username = body.get("username", "").strip()
+    username = body.get("username", "") or body.get("login", "")
+    username = username.strip()
     password = body.get("password", "").strip()
 
     if not username or not password:

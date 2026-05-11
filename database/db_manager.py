@@ -212,12 +212,49 @@ class DatabaseManager:
             """,
             """
             CREATE INDEX IF NOT EXISTS idx_images_ticket ON ticket_images(ticket_number);
+            """,
             """
+            CREATE TABLE IF NOT EXISTS rebuild_checkpoint
+            (
+                id SERIAL PRIMARY KEY,
+                checkpoint_date TIMESTAMP NOT NULL,
+                processed_count INTEGER DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
         ]
 
         for query in queries:
             self.cursor.execute(query)
         self.connection.set_session(autocommit=old_autocommit)
+
+    def get_checkpoint(self) -> Optional[Dict]:
+        """Получить последнюю контрольную точку перестройки БД"""
+        try:
+            self.cursor.execute(
+                "SELECT checkpoint_date, processed_count FROM rebuild_checkpoint ORDER BY id DESC LIMIT 1"
+            )
+            row = self.cursor.fetchone()
+            if row:
+                return {
+                    'checkpoint_date': row['checkpoint_date'],
+                    'processed_count': row['processed_count'],
+                }
+            return None
+        except Exception:
+            return None
+
+    def save_checkpoint(self, checkpoint_date: datetime, processed_count: int):
+        """Сохранить новую контрольную точку перестройки БД"""
+        try:
+            self.cursor.execute(
+                "INSERT INTO rebuild_checkpoint (checkpoint_date, processed_count) VALUES (%s, %s)",
+                (checkpoint_date, processed_count)
+            )
+            self.connection.commit()
+        except Exception as e:
+            logger = logging.getLogger(__name__)
+            logger.error(f"Ошибка сохранения checkpoint: {e}")
 
     def ticket_exists(self, ticket_number: str) -> bool:
         """Проверка существования заявки"""

@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>ГКУ ОП Заявки</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css">
     <script src="/static/js/auth.js"></script>
     <style>
@@ -45,6 +46,12 @@
         <!-- Контейнер для тостов -->
         <div class="toast-container" id="toastContainer"></div>
 
+        <!-- Оверлей загрузки -->
+        <div class="loading-overlay" id="loadingOverlay">
+            <div class="loading-spinner"></div>
+            <div class="loading-text" id="loadingText">Обновление данных…</div>
+        </div>
+
         <div class="error-msg" id="errorMsg"></div>
 
         <div class="tabs">
@@ -67,7 +74,7 @@
             </div>
         </div>
 
-        <div id="searchResultsInfo" class="search-results-info" style="display:none; margin-bottom:8px; font-size:0.9em; color:#666;"></div>
+        <div id="searchResultsInfo" class="search-results-info" style="display:none"></div>
 
         <div class="table-wrap">
             <table>
@@ -93,6 +100,24 @@
     <script>
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
+
+        // ─── Индикатор загрузки ──────────────────────────────
+        let _isLoading = false;
+
+        function showLoading(text) {
+            if (_isLoading) return;
+            _isLoading = true;
+            const overlay = document.getElementById('loadingOverlay');
+            const textEl = document.getElementById('loadingText');
+            if (textEl && text) textEl.textContent = text;
+            if (overlay) overlay.classList.add('active');
+        }
+
+        function hideLoading() {
+            _isLoading = false;
+            const overlay = document.getElementById('loadingOverlay');
+            if (overlay) overlay.classList.remove('active');
+        }
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
@@ -145,7 +170,7 @@
                 return handleLoginV2(event);
             }
 
-            // Fallback на старый механизм (если auth.js не загрузился)
+            // Fallback на новый механизм аутентификации (если auth.js не загрузился)
             const login = document.getElementById('authLogin').value.trim();
             const password = document.getElementById('authPassword').value.trim();
             const errorEl = document.getElementById('authError');
@@ -154,9 +179,20 @@
                 const data = await fetchJSON('/api/auth/login', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({login, password})
+                    body: JSON.stringify({username: login, password})
                 });
                 if (data.status === 'ok') {
+                    // Сохраняем токен, если он есть
+                    if (data.token) {
+                        try {
+                            sessionStorage.setItem('gkuop_auth_v2', JSON.stringify({
+                                user: data.user,
+                                token: data.token,
+                                permissions: data.permissions || [],
+                                timestamp: Date.now()
+                            }));
+                        } catch (e) { /* ignore */ }
+                    }
                     setAuth(data.username);
                     showApp();
                     errorEl.textContent = '';
@@ -461,6 +497,8 @@
             document.getElementById('ticketsBody').innerHTML =
                 '<tr><td colspan="5" class="loading">Загрузка...</td></tr>';
 
+            showLoading('Загрузка заявок…');
+
             try {
                 let data;
 
@@ -531,6 +569,8 @@
                 hideError();
             } catch (e) {
                 showError('Ошибка загрузки: ' + e.message);
+            } finally {
+                hideLoading();
             }
         }
 
@@ -574,6 +614,51 @@
             loadTickets();
         }
 
+        // ─── Polling прогресса перестройки БД ────────────────
+        let _rebuildPollTimer = null;
+
+        function showRebuildProgress(message, type) {
+            const el = document.getElementById('searchResultsInfo');
+            if (!el) return;
+            const cls = type ? ` rebuild-progress ${type}` : ' rebuild-progress';
+            el.innerHTML = `<div class="${cls.trim()}"><span class="spinner-inline"></span> ${message}</div>`;
+            el.style.display = 'block';
+        }
+
+        function hideRebuildProgress() {
+            const el = document.getElementById('searchResultsInfo');
+            if (el) el.style.display = 'none';
+            if (_rebuildPollTimer) {
+                clearTimeout(_rebuildPollTimer);
+                _rebuildPollTimer = null;
+            }
+        }
+
+        async function pollRebuildStatus() {
+            try {
+                const status = await fetchJSON('/api/rebuild/status');
+
+                if (status.status === 'running') {
+                    showRebuildProgress(status.message || 'Обработка писем…');
+                    _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
+                } else if (status.status === 'completed') {
+                    hideRebuildProgress();
+                    showToast('✓ Данные успешно обновлены', 'success');
+                    document.getElementById('errorMsg').style.display = 'none';
+                    loadTabCounts();
+                    loadTickets();
+                } else if (status.status === 'error') {
+                    hideRebuildProgress();
+                    showError('Ошибка: ' + (status.message || 'Неизвестная ошибка'));
+                    showToast('Ошибка обновления: ' + (status.message || 'Неизвестная ошибка'), 'error');
+                }
+            } catch (e) {
+                hideRebuildProgress();
+                showError('Ошибка соединения: ' + e.message);
+                showToast('Ошибка соединения: ' + e.message, 'error');
+            }
+        }
+
         async function _rebuildDatabase() {
             const confirmed = await showModal(
                 'Обновление данных',
@@ -584,17 +669,17 @@
             showError('');
 
             try {
-                const data = await fetchJSON('/api/rebuild', { method: 'POST' });
+                const data = await fetchJSON('/api/rebuild/start', { method: 'POST' });
 
                 if (data.error) {
                     showError('Ошибка: ' + data.error);
                     showToast('Ошибка обновления: ' + data.error, 'error');
-                } else {
-                    showToast('✓ Данные успешно обновлены', 'success');
-                    document.getElementById('errorMsg').style.display = 'none';
-                    loadTabCounts();
-                    loadTickets();
+                    return;
                 }
+
+                // Показываем начальный индикатор и запускаем polling
+                showRebuildProgress('Подготовка к обработке…');
+                _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
             } catch (e) {
                 showError('Ошибка соединения: ' + e.message);
                 showToast('Ошибка соединения: ' + e.message, 'error');
