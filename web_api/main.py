@@ -37,6 +37,12 @@ from services.image_compressor import (
     CompressionPreset
 )
 
+# Импорт модуля аутентификации и авторизации
+from auth.middleware import AuthMiddleware, require_permission, get_current_user
+from auth.db_manager import AuthDBManager
+from auth.router import router as auth_router
+from auth.models import Permission
+
 # Импорт системы мониторинга аварийных завершений
 from utils.crash_monitor import (
     install_crash_monitor,
@@ -55,12 +61,13 @@ load_dotenv()
 # Глобальные экземпляры
 db: DatabaseManager = None
 image_manager: ImageManager = None
+auth_db: AuthDBManager = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Инициализация и завершение работы приложения"""
-    global db, image_manager
+    global db, image_manager, auth_db
     config = load_config()
     db_config = {
         'host': config['database'].host,
@@ -72,6 +79,13 @@ async def lifespan(app: FastAPI):
     db = DatabaseManager(db_config)
     if not db.connect():
         print("✗ Не удалось подключиться к БД")
+
+    # Инициализация модуля аутентификации
+    auth_db = AuthDBManager(db)
+    auth_db.create_tables()
+    app.state.auth_db = auth_db
+    print("🔐 Модуль аутентификации инициализирован")
+
     # Инициализация ImageManager с компрессией изображений
     comp_config = config.get('compression')
     if comp_config and comp_config.enabled:
@@ -134,6 +148,10 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Middleware аутентификации
+from starlette.middleware.base import BaseHTTPMiddleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=AuthMiddleware())
+
 # Шаблоны
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
@@ -142,6 +160,12 @@ static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# Подключаем роутер аутентификации
+app.include_router(auth_router)
+
+# Middleware аутентификации (добавляется после всех middleware)
+from starlette.middleware.base import BaseHTTPMiddleware
+app.add_middleware(BaseHTTPMiddleware, dispatch=AuthMiddleware())
 
 # ─── Middleware для отслеживания запросов ──────────────────────────
 

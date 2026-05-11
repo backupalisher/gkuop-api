@@ -122,6 +122,39 @@ class CompressionConfig:
         )
 
 
+@dataclass
+class AuthConfig:
+    """Конфигурация модуля аутентификации"""
+    secret_key: str = ''
+    algorithm: str = 'HS256'
+    access_token_expire_minutes: int = 1440  # 24 часа
+
+    @classmethod
+    def from_env(cls):
+        return cls(
+            secret_key=os.getenv('AUTH_SECRET_KEY', ''),
+            algorithm=os.getenv('AUTH_ALGORITHM', 'HS256'),
+            access_token_expire_minutes=int(os.getenv('AUTH_ACCESS_TOKEN_EXPIRE_MINUTES', '1440')),
+        )
+
+
+@dataclass
+class CORSConfig:
+    """Конфигурация CORS"""
+    allow_origins: List[str] = field(default_factory=lambda: ['*'])
+    allow_credentials: bool = True
+    allow_methods: List[str] = field(default_factory=lambda: ['*'])
+    allow_headers: List[str] = field(default_factory=lambda: ['*'])
+
+    @classmethod
+    def from_env(cls):
+        origins = os.getenv('CORS_ALLOW_ORIGINS', '*')
+        return cls(
+            allow_origins=[o.strip() for o in origins.split(',')] if origins != '*' else ['*'],
+            allow_credentials=os.getenv('CORS_ALLOW_CREDENTIALS', 'true').lower() == 'true',
+        )
+
+
 # Загрузка конфигурации
 def load_config():
     """Загрузка всех конфигураций"""
@@ -130,4 +163,6 @@ def load_config():
         'database': DatabaseConfig.from_env(),
         'parser': ParserConfig(),
         'compression': CompressionConfig.from_env(),
+        'auth': AuthConfig.from_env(),
+        'cors': CORSConfig.from_env(),
     }
