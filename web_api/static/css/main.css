@@ -1715,7 +1715,8 @@ tr {
   flex-shrink: 0;
 }
 
-.toast .toast-msg {
+.toast .toast-msg,
+.toast .toast-text {
   flex: 1;
   color: var(--color-text);
 }
@@ -1743,7 +1744,8 @@ tr {
   to { opacity: 0; transform: translateX(100%); }
 }
 
-.toast.removing {
+.toast.removing,
+.toast.toast-fadeout {
   animation: toastOut 0.3s ease forwards;
 }
 

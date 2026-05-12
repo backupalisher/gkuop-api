@@ -77,6 +77,20 @@
             options.headers = headers;
             const r = await fetch(url, options);
             if (!r.ok) {
+                // Пытаемся извлечь человекочитаемое сообщение из JSON-ответа
+                try {
+                    const errorData = await r.json();
+                    const userMessage = errorData.message || errorData.error || null;
+                    if (userMessage) {
+                        throw new Error(userMessage);
+                    }
+                } catch (parseErr) {
+                    // Если это уже наша ошибка с сообщением — пробрасываем дальше
+                    if (parseErr instanceof Error && parseErr.message !== '') {
+                        throw parseErr;
+                    }
+                }
+                // Если не удалось распарсить JSON или нет message — fallback
                 const text = await r.text();
                 const preview = text.slice(0, 200);
                 throw new Error(`HTTP ${r.status}: ${preview}`);

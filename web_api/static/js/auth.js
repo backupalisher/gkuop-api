@@ -1249,21 +1249,60 @@ function applyPermissionUI() {
 /**
  * Показать уведомление (тост).
  * @param {string} message
- * @param {'success'|'error'|'info'} type
+ * @param {'success'|'error'|'info'|'warning'} type
+ * @param {number} [duration=6000] - время показа в мс (0 — не закрывать автоматически)
  */
-function showToast(message, type = 'info') {
+function showToast(message, type = 'info', duration = 6000) {
     const container = document.getElementById('toastContainer');
     if (!container) return;
 
+    // Иконки для каждого типа уведомления
+    const icons = {
+        success: '✓',
+        error: '✕',
+        warning: '⚠',
+        info: 'ℹ',
+    };
+    const icon = icons[type] || icons.info;
+
     const toast = document.createElement('div');
     toast.className = `toast toast-${type}`;
-    toast.textContent = message;
-    container.appendChild(toast);
+    toast.setAttribute('role', 'alert');
 
-    setTimeout(() => {
+    // Иконка
+    const iconSpan = document.createElement('span');
+    iconSpan.className = 'toast-icon';
+    iconSpan.textContent = icon;
+
+    // Текст сообщения
+    const textSpan = document.createElement('span');
+    textSpan.className = 'toast-text';
+    textSpan.textContent = message;
+
+    // Кнопка закрытия
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'toast-close';
+    closeBtn.setAttribute('aria-label', 'Закрыть');
+    closeBtn.innerHTML = '&times;';
+    closeBtn.addEventListener('click', () => {
         toast.classList.add('toast-fadeout');
         setTimeout(() => toast.remove(), 300);
-    }, 3000);
+    });
+
+    toast.appendChild(iconSpan);
+    toast.appendChild(textSpan);
+    toast.appendChild(closeBtn);
+    container.appendChild(toast);
+
+    // Автоматическое закрытие
+    if (duration > 0) {
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.classList.add('toast-fadeout');
+                setTimeout(() => toast.remove(), 300);
+            }
+        }, duration);
+    }
 }
 
 
