@@ -160,25 +160,62 @@ a:hover { text-decoration: underline; }
 .header {
   background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
   color: var(--color-text-inverse);
-  padding: var(--space-5) var(--space-8);
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: var(--space-4);
   position: sticky;
   top: 0;
   z-index: var(--z-sticky);
   box-shadow: 0 2px 12px rgba(0,0,0,0.15);
 }
 
-.header h1 {
+.header-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-5);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-height: 48px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.header-title {
   font-size: var(--font-size-2xl);
   font-weight: var(--font-weight-semibold);
   letter-spacing: -0.3px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.header h1 span { color: var(--color-primary); }
+.header-title span { color: var(--color-primary); }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  margin-left: auto;
+  position: relative;
+}
+
+.header-right .auth-indicator {
+  font-size: var(--font-size-sm);
+  color: rgba(255,255,255,0.8);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 .header a {
   color: var(--color-primary);
@@ -195,19 +232,6 @@ a:hover { text-decoration: underline; }
 .header a:hover {
   background: rgba(233, 69, 96, 0.1);
   text-decoration: none;
-}
-
-.header-actions {
-  display: flex;
-  align-items: center;
-  gap: var(--space-2);
-  position: relative;
-}
-
-.header-actions .auth-indicator {
-  font-size: var(--font-size-sm);
-  color: rgba(255,255,255,0.8);
-  margin-right: var(--space-2);
 }
 
 /* ─── Container ────────────────────────────────────────── */
@@ -2286,16 +2310,18 @@ tr {
 
 /* ─── Мобильная адаптация (768px) ──────────────────────── */
 @media (max-width: 768px) {
-  .header {
-    flex-direction: column;
-    align-items: flex-start;
-    padding: var(--space-4);
-    position: sticky;
+  .header-inner {
+    padding: var(--space-2) var(--space-4);
+    min-height: 44px;
+    gap: var(--space-2);
   }
 
-  .header-actions {
-    width: 100%;
-    justify-content: flex-end;
+  .header-title {
+    font-size: var(--font-size-xl);
+  }
+
+  .header-right .auth-indicator {
+    max-width: 120px;
   }
 
   .filters {
@@ -2325,14 +2351,20 @@ tr {
     min-height: 100dvh;
   }
 
-  .header {
-    padding: var(--space-3) var(--space-4);
-    padding-top: calc(var(--space-3) + env(safe-area-inset-top, 0px));
-    gap: var(--space-3);
+  .header-inner {
+    padding: var(--space-2) var(--space-3);
+    padding-top: calc(var(--space-2) + env(safe-area-inset-top, 0px));
+    gap: var(--space-2);
+    min-height: 40px;
   }
 
-  .header h1 {
-    font-size: var(--font-size-xl);
+  .header-title {
+    font-size: var(--font-size-lg);
+  }
+
+  .header-right .auth-indicator {
+    max-width: 100px;
+    font-size: var(--font-size-xs);
   }
 
   .container {
@@ -2642,8 +2674,12 @@ tr {
 
 /* ─── Мобильная адаптация (360px) ──────────────────────── */
 @media (max-width: 360px) {
-  .header h1 {
-    font-size: var(--font-size-lg);
+  .header-title {
+    font-size: var(--font-size-base);
+  }
+
+  .header-right .auth-indicator {
+    max-width: 80px;
   }
 
   .table-wrap tbody tr {

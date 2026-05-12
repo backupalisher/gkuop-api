@@ -20,8 +20,12 @@
     </div>
 
     <div class="header">
-        <h1>Заявка #{{ ticket_number }}</h1>
-        <div id="authIndicator" class="header-actions" style="display:none"></div>
+        <div class="header-inner">
+            <div class="header-left">
+                <h1 class="header-title">Заявка #{{ ticket_number }}</h1>
+            </div>
+            <div id="authIndicator" class="header-right" style="display:none"></div>
+        </div>
     </div>
 
     <div class="container">
@@ -189,7 +193,7 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>Logged in as ' + auth.username + '</span>';
+                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>' + auth.username + '</span>';
             }
         }
 

@@ -23,21 +23,24 @@
     </div>
 
     <div class="header">
-        <h1>ГКУ ОП <span>Заявки</span></h1>
-        <div id="authIndicator" class="header-actions" style="display:none">
-            <span class="auth-indicator"></span>
-<!--            <button class="btn btn-danger" onclick="handleLogout()">🚪 Выйти</button>-->
-            <button id="hamburgerBtn" class="btn btn-danger" aria-label="Меню" onclick="toggleHamburgerMenu()">☰</button>
-            <div id="hamburgerMenu" class="hamburger-menu">
-                <a href="#" class="nav-link" data-page="users" data-role="admin" onclick="event.preventDefault(); toggleHamburgerMenu(); openUsersModal();">
-                    <span class="menu-icon">👥</span> Пользователи
-                </a>
-                <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshData(); toggleHamburgerMenu();">
-                    <span class="menu-icon">⟳</span> Обновить данные
-                </a>
-                <a href="#" class="nav-link" onclick="handleLogout(); toggleHamburgerMenu();">
-                    <span class="menu-icon">🚪</span>Выйти
-                </a>
+        <div class="header-inner">
+            <div class="header-left">
+                <h1 class="header-title">ГКУ ОП <span>Заявки</span></h1>
+            </div>
+            <div id="authIndicator" class="header-right" style="display:none">
+                <span class="auth-indicator"><span class="auth-dot"></span></span>
+                <button id="hamburgerBtn" class="btn btn-danger" aria-label="Меню" onclick="toggleHamburgerMenu()">☰</button>
+                <div id="hamburgerMenu" class="hamburger-menu">
+                    <a href="#" class="nav-link" data-page="users" data-role="admin" onclick="event.preventDefault(); toggleHamburgerMenu(); openUsersModal();">
+                        <span class="menu-icon">👥</span> Пользователи
+                    </a>
+                    <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshData(); toggleHamburgerMenu();">
+                        <span class="menu-icon">⟳</span> Обновить данные
+                    </a>
+                    <a href="#" class="nav-link" onclick="handleLogout(); toggleHamburgerMenu();">
+                        <span class="menu-icon">🚪</span>Выйти
+                    </a>
+                </div>
             </div>
         </div>
     </div>

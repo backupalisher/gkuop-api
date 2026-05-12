@@ -1167,7 +1167,7 @@ async function handleLoginV2(event) {
             if (indicator) {
                 indicator.style.display = 'flex';
                 const nameEl = indicator.querySelector('.auth-indicator');
-                if (nameEl) nameEl.textContent = result.user?.username || login;
+                if (nameEl) nameEl.innerHTML = '<span class="auth-dot"></span>' + (result.user?.username || login);
             }
             // Сохраняем также под старым ключом для совместимости с ticket_detail.html
             try {
