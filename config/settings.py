@@ -149,6 +149,22 @@ class AuthConfig:
 
 
 @dataclass
+class StaticVersionConfig:
+    """Конфигурация версионирования статических файлов"""
+    enabled: bool = True
+    method: str = 'hash'  # 'hash' | 'timestamp' | 'fixed'
+    fixed_version: str = '1.0'
+
+    @classmethod
+    def from_env(cls):
+        return cls(
+            enabled=os.getenv('STATIC_VERSION_ENABLED', 'true').lower() == 'true',
+            method=os.getenv('STATIC_VERSION_METHOD', 'hash'),
+            fixed_version=os.getenv('STATIC_VERSION', '1.0'),
+        )
+
+
+@dataclass
 class CORSConfig:
     """Конфигурация CORS"""
     allow_origins: List[str] = field(default_factory=lambda: ['*'])
@@ -175,4 +191,5 @@ def load_config():
         'compression': CompressionConfig.from_env(),
         'auth': AuthConfig.from_env(),
         'cors': CORSConfig.from_env(),
+        'static_version': StaticVersionConfig.from_env(),
     }

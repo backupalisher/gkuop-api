@@ -5,6 +5,7 @@ import os
 import sys
 import re
 import json
+import hashlib
 import logging
 import asyncio
 import threading
@@ -68,6 +69,9 @@ db: DatabaseManager = None
 image_manager: ImageManager = None
 auth_db: AuthDBManager = None
 
+# Версия статических файлов (вычисляется при старте)
+static_version: str = "1"
+
 # Хранилище статуса фоновой перестройки БД
 _rebuild_progress = {
     "running": False,
@@ -78,6 +82,30 @@ _rebuild_progress = {
     "status": "idle",  # idle | running | completed | error
     "result": None,
 }
+
+
+def compute_static_version() -> str:
+    """
+    Вычисляет версию статических файлов на основе MD5-хеша их содержимого.
+    При изменении любого из отслеживаемых файлов версия автоматически меняется.
+    """
+    static_dir = os.path.join(os.path.dirname(__file__), "static")
+    tracked_files = [
+        os.path.join(static_dir, "css", "main.css"),
+        os.path.join(static_dir, "js", "auth.js"),
+    ]
+    hash_md5 = hashlib.md5()
+    for filepath in tracked_files:
+        if os.path.isfile(filepath):
+            with open(filepath, "rb") as f:
+                # Читаем файл блоками для эффективности
+                for chunk in iter(lambda: f.read(8192), b""):
+                    hash_md5.update(chunk)
+        else:
+            # Если файла нет — учитываем сам факт отсутствия
+            hash_md5.update(filepath.encode("utf-8"))
+    # Берём первые 12 символов хеша — достаточно для версионирования
+    return hash_md5.hexdigest()[:12]
 
 
 @asynccontextmanager
@@ -143,6 +171,20 @@ async def lifespan(app: FastAPI):
     else:
         image_manager = ImageManager(upload_dir='uploads', compression_enabled=False)
         print("✓ ImageManager инициализирован (компрессия выключена)")
+
+    # Вычисление версии статических файлов
+    global static_version
+    sv_config = config.get('static_version', None)
+    if sv_config and sv_config.enabled:
+        if sv_config.method == 'hash':
+            static_version = compute_static_version()
+        elif sv_config.method == 'timestamp':
+            static_version = str(int(datetime.now().timestamp()))
+        else:  # fixed
+            static_version = sv_config.fixed_version
+    else:
+        static_version = "1"
+    print(f"📦 Версия статических файлов: {static_version}")
 
     # Установка системы мониторинга аварийных завершений
     def _shutdown_cleanup():
@@ -1426,7 +1468,10 @@ async def api_rebuild():
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request):
     """Главная страница"""
-    return templates.TemplateResponse("index.html", {"request": request})
+    return templates.TemplateResponse(
+        "index.html",
+        {"request": request, "static_version": static_version},
+    )
 
 
 @app.get("/tickets/{ticket_number}", response_class=HTMLResponse)
@@ -1434,7 +1479,7 @@ async def ticket_detail(request: Request, ticket_number: str):
     """Страница деталей заявки"""
     return templates.TemplateResponse(
         "ticket_detail.html",
-        {"request": request, "ticket_number": ticket_number},
+        {"request": request, "ticket_number": ticket_number, "static_version": static_version},
     )
 
 
