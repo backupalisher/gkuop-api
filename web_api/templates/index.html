@@ -267,7 +267,7 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.querySelector('.auth-indicator').textContent = auth.username;
+                indicator.querySelector('.auth-indicator').innerHTML = '<span class="auth-dot"></span>' + auth.username;
             }
             // Применяем permission UI если auth.js загружен
             if (typeof applyPermissionUI === 'function') {
