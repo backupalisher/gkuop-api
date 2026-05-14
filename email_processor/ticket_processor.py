@@ -267,10 +267,15 @@ class TicketProcessor:
             return False
 
     def _is_partial_inventory(self, value: str) -> bool:
-        """Проверяет, является ли значение неполным инвентарным номером (< 6 цифр)."""
+        """
+        Проверяет, является ли значение неполным инвентарным номером.
+        Неполным считается номер из цифр, длина которого != 12.
+        """
         if not value:
             return False
-        return bool(re.match(r'^\d{1,5}$', value))
+        if not re.match(r'^\d+$', value):
+            return False
+        return len(value) != 12
 
     def _is_serial_number(self, value: str) -> bool:
         """Проверяет, является ли значение серийным номером (содержит буквы)."""
