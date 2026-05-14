@@ -266,20 +266,37 @@ class TicketProcessor:
             print(f"✗ Ошибка создания заявки: {e}")
             return False
 
+    def _is_partial_inventory(self, value: str) -> bool:
+        """Проверяет, является ли значение неполным инвентарным номером (< 6 цифр)."""
+        if not value:
+            return False
+        return bool(re.match(r'^\d{1,5}$', value))
+
+    def _is_serial_number(self, value: str) -> bool:
+        """Проверяет, является ли значение серийным номером (содержит буквы)."""
+        if not value:
+            return False
+        return bool(re.search(r'[a-zA-Zа-яА-ЯёЁ]', value))
+
     def _handle_serial_number(self, current_ticket: Dict, email_data: Dict,
                                changed_fields: Dict) -> Dict:
         """
-        Обработка серийного номера, ошибочно указанного как инвентарный.
+        Обработка серийного номера или неполного инвентарного номера,
+        ошибочно указанных в поле "Инвентарный номер".
 
         Логика:
-        1. Если в письме есть serial_number (с буквами), а inventory_number отсутствует:
-           - Если в БД ещё нет inventory_number — сохраняем serial_number как временный
-             inventory_number и добавляем пометку в current_note.
-           - Если в БД уже есть inventory_number (корректный) — игнорируем serial_number.
-        2. Если в письме есть корректный inventory_number (только цифры, >= 6 знаков):
-           - Если в БД сейчас хранится серийный номер (содержит буквы) — заменяем его
-             на правильный инвентарный и добавляем запись в current_note.
-           - Если в БД уже есть другой инвентарный номер — просто обновляем (штатная логика).
+        1. В письме серийный номер (с буквами), inventory_number отсутствует:
+           - Если в БД ещё нет inventory_number — сохраняем серийный как временный
+             с пометкой в current_note.
+           - Если в БД уже есть inventory_number — игнорируем.
+        2. В письме корректный inventory_number (только цифры, >= 6 знаков):
+           - Если в БД сейчас серийный номер (с буквами) — заменяем, добавляем запись
+             в current_note: "Инвентарный номер: X (Y)".
+           - Если в БД сейчас неполный номер (< 6 цифр) — заменяем на полный,
+             добавляем запись в current_note.
+        3. В письме неполный инвентарный номер (< 6 цифр):
+           - Если в БД ещё нет inventory_number — сохраняем как есть.
+           - Если в БД уже есть — штатная логика get_changed_fields.
 
         Возвращает обновлённый changed_fields.
         """
@@ -303,13 +320,22 @@ class TicketProcessor:
             # Если в БД уже есть inventory_number — игнорируем серийный номер
             return changed_fields
 
-        # Случай 2: в письме корректный инвентарный номер
-        if new_inventory:
-            if old_inventory and re.search(r'[a-zA-Zа-яА-ЯёЁ]', old_inventory):
+        # Случай 2: в письме корректный инвентарный номер (только цифры, >= 6 знаков)
+        if new_inventory and not self._is_partial_inventory(new_inventory):
+            if old_inventory and self._is_serial_number(old_inventory):
                 # В БД сейчас серийный номер — заменяем на правильный
                 changed_fields['inventory_number'] = new_inventory
-                # Добавляем запись в current_note: старый серийный как примечание
                 note_suffix = f"Инвентарный номер: {new_inventory} ({old_inventory})"
+                old_note = (current_ticket.get('current_note') or '').strip()
+                if old_note:
+                    if note_suffix not in old_note:
+                        changed_fields['current_note'] = f"{old_note}\n{note_suffix}"
+                else:
+                    changed_fields['current_note'] = note_suffix
+            elif old_inventory and self._is_partial_inventory(old_inventory):
+                # В БД сейчас неполный номер — заменяем на полный
+                changed_fields['inventory_number'] = new_inventory
+                note_suffix = f"Инвентарный номер: {new_inventory} (ранее был указан неполный номер: {old_inventory})"
                 old_note = (current_ticket.get('current_note') or '').strip()
                 if old_note:
                     if note_suffix not in old_note:

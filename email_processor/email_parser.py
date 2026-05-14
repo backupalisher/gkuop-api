@@ -122,33 +122,35 @@ class EmailParser:
     def _validate_inventory_number(value: str) -> tuple:
         """
         Валидация и классификация значения поля 'Инвентарный номер'.
-        Возвращает кортеж (inventory_number, serial_number, note_suffix).
+        Возвращает кортеж (inventory_number, serial_number, is_partial).
 
         Правила:
         - Если значение содержит буквы (латиница/кириллица) — это серийный номер.
-        - Если значение состоит только из цифр, но длина < 6 — это неполный номер, игнорируется.
-        - Если значение состоит только из цифр и длина >= 6 — это корректный инвентарный номер.
-        - Серийный номер возвращается отдельно для последующей обработки.
+        - Если значение состоит только из цифр, но длина < 6 — это неполный
+          инвентарный номер (пользователь указал не все цифры), сохраняется как есть.
+        - Если значение состоит только из цифр и длина >= 6 — это корректный
+          инвентарный номер.
+        - is_partial=True означает, что номер неполный и в будущем может быть заменён.
         """
         if not value:
-            return None, None, None
+            return None, None, False
 
         # Проверяем, есть ли буквы (латиница или кириллица)
         if re.search(r'[a-zA-Zа-яА-ЯёЁ]', value):
             # Это серийный номер
-            return None, value, None
+            return None, value, False
 
         # Проверяем, состоит ли только из цифр
         if re.match(r'^\d+$', value):
             digits_only = value
             if len(digits_only) < 6:
-                # Меньше 6 цифр — неполный номер, игнорируем
-                return None, None, None
+                # Меньше 6 цифр — неполный номер, сохраняем с пометкой
+                return digits_only, None, True
             # Корректный инвентарный номер (6+ цифр)
-            return digits_only, None, None
+            return digits_only, None, False
 
         # Если не подходит ни под одно правило — возвращаем как есть
-        return value, None, None
+        return value, None, False
 
     def parse_email_content(self, body: str) -> Dict:
         """Парсинг тела письма для извлечения всех полей"""
@@ -235,19 +237,17 @@ class EmailParser:
         # Валидация и классификация инвентарного номера
         raw_inv = result.get('inventory_number')
         if raw_inv:
-            inv_number, serial_number, _ = self._validate_inventory_number(raw_inv)
-            if inv_number:
-                result['inventory_number'] = inv_number
-                # Если был серийный номер в этом же письме — не может быть,
-                # т.к. поле одно, но на всякий случай очищаем
-                result.pop('serial_number', None)
-            elif serial_number:
+            inv_number, serial_number, is_partial = self._validate_inventory_number(raw_inv)
+            if serial_number:
                 # Это серийный номер — сохраняем отдельно, inventory_number не устанавливаем
                 result.pop('inventory_number', None)
                 result['serial_number'] = serial_number
-            else:
-                # Невалидное значение (менее 6 цифр) — удаляем
-                result.pop('inventory_number', None)
+            elif inv_number:
+                result['inventory_number'] = inv_number
+                # Если номер неполный (< 6 цифр), помечаем для последующей обработки
+                if is_partial:
+                    result['inventory_partial'] = True
+                result.pop('serial_number', None)
 
         return result
 
