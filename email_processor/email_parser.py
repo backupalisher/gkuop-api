@@ -118,6 +118,38 @@ class EmailParser:
 
         return note
 
+    @staticmethod
+    def _validate_inventory_number(value: str) -> tuple:
+        """
+        Валидация и классификация значения поля 'Инвентарный номер'.
+        Возвращает кортеж (inventory_number, serial_number, note_suffix).
+
+        Правила:
+        - Если значение содержит буквы (латиница/кириллица) — это серийный номер.
+        - Если значение состоит только из цифр, но длина < 6 — это неполный номер, игнорируется.
+        - Если значение состоит только из цифр и длина >= 6 — это корректный инвентарный номер.
+        - Серийный номер возвращается отдельно для последующей обработки.
+        """
+        if not value:
+            return None, None, None
+
+        # Проверяем, есть ли буквы (латиница или кириллица)
+        if re.search(r'[a-zA-Zа-яА-ЯёЁ]', value):
+            # Это серийный номер
+            return None, value, None
+
+        # Проверяем, состоит ли только из цифр
+        if re.match(r'^\d+$', value):
+            digits_only = value
+            if len(digits_only) < 6:
+                # Меньше 6 цифр — неполный номер, игнорируем
+                return None, None, None
+            # Корректный инвентарный номер (6+ цифр)
+            return digits_only, None, None
+
+        # Если не подходит ни под одно правило — возвращаем как есть
+        return value, None, None
+
     def parse_email_content(self, body: str) -> Dict:
         """Парсинг тела письма для извлечения всех полей"""
         result = {}
@@ -126,8 +158,8 @@ class EmailParser:
         # Формат писем: "* Ключ: Значение" (со звёздочкой в начале строки)
         field_patterns = {
             'inventory_number': [
-                r'(?:\*\s*)?Инвентарный номер:\s*(\d+)',
-                r'(?:\*\s*)?Инв\.\s*номер\s*принтера:\s*(\d+)',
+                r'(?:\*\s*)?Инвентарный номер:\s*(\S+)',
+                r'(?:\*\s*)?Инв\.\s*номер\s*принтера:\s*(\S+)',
             ],
             'printer_model': [
                 r'(?:\*\s*)?Принтер/МФУ:\s*(.+?)(?:\n|$)',
@@ -136,7 +168,7 @@ class EmailParser:
             'priority': [r'(?:\*\s*)?Приоритет:\s*(.+?)(?:\n|$)'],
             'assigned_to': [r'(?:\*\s*)?Назначен(?:а)?:\s*(.+?)(?:\n|$)'],
             'office': [r'(?:\*\s*)?Офис(?:\s*\(новый\))?:\s*(.+?)(?:\n|$)'],
-            'cabinet': [r'(?:\*\s*)?Кабинет(?:\s*\(новый\))?:\s*(\d+)\**\s*(?:\n|$)'],
+            'cabinet': [r'(?:\*\s*)?Кабинет(?:\s*\(новый\))?:\s*(.+?)(?:\n|$)'],
             'component': [r'(?:\*\s*)?Комплектующее:\s*(.+?)(?:\n|$)'],
             'author': [r'(?:\*\s*)?Автор:\s*(.+?)(?:\n|$)'],
             'phone': [r'(?:\*\s*)?Контактный телефон:\s*(\d+)(?:\n|$)'],
@@ -152,7 +184,8 @@ class EmailParser:
                 match = re.search(pattern, body, re.MULTILINE)
                 if match:
                     value = match.group(1).strip()
-                    if value and value != '*':
+                    # Пропускаем пустые значения, звёздочку и прочерк (—, -)
+                    if value and value not in ('*', '—', '-'):
                         result[key] = value
                         break
 
@@ -198,6 +231,23 @@ class EmailParser:
             match = re.search(self.patterns['inventory_number_alt'], body)
             if match:
                 result['inventory_number'] = match.group(1)
+
+        # Валидация и классификация инвентарного номера
+        raw_inv = result.get('inventory_number')
+        if raw_inv:
+            inv_number, serial_number, _ = self._validate_inventory_number(raw_inv)
+            if inv_number:
+                result['inventory_number'] = inv_number
+                # Если был серийный номер в этом же письме — не может быть,
+                # т.к. поле одно, но на всякий случай очищаем
+                result.pop('serial_number', None)
+            elif serial_number:
+                # Это серийный номер — сохраняем отдельно, inventory_number не устанавливаем
+                result.pop('inventory_number', None)
+                result['serial_number'] = serial_number
+            else:
+                # Невалидное значение (менее 6 цифр) — удаляем
+                result.pop('inventory_number', None)
 
         return result
 

@@ -1,6 +1,7 @@
 """
 Обработчик заявок и комментариев
 """
+import re
 from typing import Dict, Optional
 from datetime import datetime
 from database.models import Ticket, TicketComment, TicketHistoryRecord
@@ -55,7 +56,9 @@ class TicketProcessor:
         return "Обновление информации по заявке"
 
     # Поля, которые фиксируются при первом появлении и не перезаписываются пустыми значениями
-    IMMUTABLE_FIELDS = ['inventory_number', 'printer_model']
+    # printer_model — immutable (модель принтера не меняется),
+    # inventory_number — НЕ immutable, т.к. может быть заменён с серийного на правильный
+    IMMUTABLE_FIELDS = ['printer_model']
 
     # Статусы, которые нельзя перезаписывать при обновлении из почты
     PROTECTED_STATUSES = {'Выполнено', 'В архив'}
@@ -235,6 +238,21 @@ class TicketProcessor:
     def process_new_ticket(self, email_data: Dict) -> bool:
         """Обработка новой заявки"""
         try:
+            # Если в письме серийный номер (с буквами) вместо инвентарного,
+            # и нет корректного инвентарного — сохраняем серийный как временный
+            serial_number = email_data.get('serial_number')
+            if serial_number and not email_data.get('inventory_number'):
+                # Добавляем серийный номер как временный inventory_number
+                email_data['inventory_number'] = serial_number
+                # Добавляем пометку в current_note
+                note_suffix = f"Инвентарный номер: {serial_number} (серийный номер)"
+                old_note = (email_data.get('note') or '').strip()
+                if old_note:
+                    if note_suffix not in old_note:
+                        email_data['note'] = f"{old_note}\n{note_suffix}"
+                else:
+                    email_data['note'] = note_suffix
+
             ticket = self._build_ticket_from_data(email_data)
             result = self.db.save_ticket(ticket)
             if result:
@@ -247,6 +265,73 @@ class TicketProcessor:
         except Exception as e:
             print(f"✗ Ошибка создания заявки: {e}")
             return False
+
+    def _handle_serial_number(self, current_ticket: Dict, email_data: Dict,
+                               changed_fields: Dict) -> Dict:
+        """
+        Обработка серийного номера, ошибочно указанного как инвентарный.
+
+        Логика:
+        1. Если в письме есть serial_number (с буквами), а inventory_number отсутствует:
+           - Если в БД ещё нет inventory_number — сохраняем serial_number как временный
+             inventory_number и добавляем пометку в current_note.
+           - Если в БД уже есть inventory_number (корректный) — игнорируем serial_number.
+        2. Если в письме есть корректный inventory_number (только цифры, >= 6 знаков):
+           - Если в БД сейчас хранится серийный номер (содержит буквы) — заменяем его
+             на правильный инвентарный и добавляем запись в current_note.
+           - Если в БД уже есть другой инвентарный номер — просто обновляем (штатная логика).
+
+        Возвращает обновлённый changed_fields.
+        """
+        serial_number = email_data.get('serial_number')
+        new_inventory = email_data.get('inventory_number')
+        old_inventory = (current_ticket.get('inventory_number') or '').strip()
+
+        # Случай 1: в письме серийный номер, инвентарного нет
+        if serial_number and not new_inventory:
+            if not old_inventory:
+                # В БД ещё нет inventory_number — сохраняем серийный как временный
+                changed_fields['inventory_number'] = serial_number
+                # Добавляем пометку в current_note
+                note_suffix = f"Инвентарный номер: {serial_number} (серийный номер)"
+                old_note = (current_ticket.get('current_note') or '').strip()
+                if old_note:
+                    if note_suffix not in old_note:
+                        changed_fields['current_note'] = f"{old_note}\n{note_suffix}"
+                else:
+                    changed_fields['current_note'] = note_suffix
+            # Если в БД уже есть inventory_number — игнорируем серийный номер
+            return changed_fields
+
+        # Случай 2: в письме корректный инвентарный номер
+        if new_inventory:
+            if old_inventory and re.search(r'[a-zA-Zа-яА-ЯёЁ]', old_inventory):
+                # В БД сейчас серийный номер — заменяем на правильный
+                changed_fields['inventory_number'] = new_inventory
+                # Добавляем запись в current_note: старый серийный как примечание
+                note_suffix = f"Инвентарный номер: {new_inventory} ({old_inventory})"
+                old_note = (current_ticket.get('current_note') or '').strip()
+                if old_note:
+                    if note_suffix not in old_note:
+                        changed_fields['current_note'] = f"{old_note}\n{note_suffix}"
+                else:
+                    changed_fields['current_note'] = note_suffix
+            # Если в БД корректный инвентарный или его нет — штатная логика get_changed_fields сработает
+
+        return changed_fields
+
+    def _enrich_email_data_for_history(self, email_data: Dict, changed_fields: Dict) -> Dict:
+        """
+        Создаёт копию email_data, обогащённую изменениями из changed_fields,
+        чтобы запись истории отражала актуальное состояние после обработки.
+        """
+        enriched = dict(email_data)
+        for field, value in changed_fields.items():
+            enriched[field] = value
+        # Поле current_note в email_data приходит как 'note', а в changed_fields как 'current_note'
+        if 'current_note' in changed_fields:
+            enriched['note'] = changed_fields['current_note']
+        return enriched
 
     def process_existing_ticket(self, existing_ticket: Dict, email_data: Dict) -> bool:
         """Обработка существующей заявки (обновление + комментарий + снимок в историю)"""
@@ -262,13 +347,18 @@ class TicketProcessor:
             old_status = current_ticket.get('status', '') or ''
             new_status = email_data.get('status', old_status) or ''
 
+            # Обработка серийного номера (ошибочно указанного как инвентарный)
+            changed_fields = self._handle_serial_number(current_ticket, email_data, changed_fields)
+
             # Получаем последнюю запись истории для сравнения (чтобы сохранять только diff)
             last_history = self.db.get_last_history_record(ticket_number)
 
+            # Создаём обогащённую копию email_data для записи истории,
+            # чтобы она отражала изменения, внесённые _handle_serial_number
+            history_email_data = self._enrich_email_data_for_history(email_data, changed_fields)
+
             # Всегда сохраняем снимок в историю (каждое письмо = запись в хронологии)
-            # Передаём current_ticket, чтобы immutable-поля (inventory_number, printer_model)
-            # не потерялись, если в текущем письме их нет
-            history_record = self._build_history_record(email_data, current_ticket, last_history)
+            history_record = self._build_history_record(history_email_data, current_ticket, last_history)
             self.db.save_history_record(history_record)
 
             # Если нет изменений, не создаем комментарий
