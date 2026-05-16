@@ -67,7 +67,7 @@
   --font-size-base: 14px;
   --font-size-md: 15px;
   --font-size-lg: 16px;
-  --font-size-xl: 18px;
+  --font-size-xl: 28px;
   --font-size-2xl: 22px;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
@@ -953,11 +953,11 @@ tr {
 
 /* Подсветка строк с заполненным полем «Комплектующее» */
 .table-wrap tbody tr.has-component {
-  background-color: #debfff;
+  background-color: #eeffed;
 }
 
 .table-wrap tbody tr.has-component:nth-child(even) {
-  background-color: #debfff;
+  background-color: #eeffed;
 }
 
 .table-wrap tbody tr:hover {
