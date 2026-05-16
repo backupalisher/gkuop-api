@@ -2,8 +2,32 @@
 Вспомогательные функции
 """
 import sys
-from typing import Dict
+from typing import Dict, Optional
 from datetime import datetime, timedelta
+
+
+# Словарь соответствия полных адресов офисов их сокращённым обозначениям
+OFFICE_ABBREVIATIONS: Dict[str, str] = {
+    "2-й Южнопортовый пр-д, д. 27А, стр. 1": "ЮП",
+    "ул. Садовая-Самотечная, 1": "СС",
+    "ул. Новохохловская, д. 23, стр. 1": "НХ",
+}
+
+
+def abbreviate_office(office: Optional[str]) -> Optional[str]:
+    """
+    Заменяет полный адрес офиса на сокращённое обозначение.
+    Если адрес не найден в словаре соответствий, возвращается исходное значение.
+
+    Args:
+        office: Полный адрес офиса или None.
+
+    Returns:
+        Сокращённое обозначение офиса или исходное значение, если сокращение не найдено.
+    """
+    if not office:
+        return office
+    return OFFICE_ABBREVIATIONS.get(office, office)
 
 def format_ticket_info(ticket: Dict) -> str:
     """Форматирование информации о заявке для вывода"""

@@ -951,6 +951,15 @@ tr {
   background-color: #f8faff;
 }
 
+/* Подсветка строк с заполненным полем «Комплектующее» */
+.table-wrap tbody tr.has-component {
+  background-color: #debfff;
+}
+
+.table-wrap tbody tr.has-component:nth-child(even) {
+  background-color: #debfff;
+}
+
 .table-wrap tbody tr:hover {
   background-color: #d0e2ff;
 }
@@ -2527,10 +2536,18 @@ tr {
   }
 
   .table-wrap td:nth-child(4)::before {
-    content: "Кабинет";
+    content: "Требуется";
   }
 
   .table-wrap td:nth-child(5)::before {
+    content: "Комплектующее";
+  }
+
+  .table-wrap td:nth-child(6)::before {
+    content: "Кабинет";
+  }
+
+  .table-wrap td:nth-child(7)::before {
     content: "Обновлено";
   }
 

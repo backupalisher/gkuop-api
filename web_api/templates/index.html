@@ -86,12 +86,14 @@
                         <th onclick="sortBy('ticket_number')">№ заявки <span class="arrow" id="arr-ticket_number"></span></th>
                         <th onclick="sortBy('status')">Статус <span class="arrow" id="arr-status"></span></th>
                         <th onclick="sortBy('inventory_number')">Инв. номер <span class="arrow" id="arr-inventory_number"></span></th>
+                        <th>Требуется</th>
+                        <th>Комплектующее</th>
                         <th>Кабинет</th>
                         <th onclick="sortBy('last_updated_date')">Обновлено <span class="arrow" id="arr-last_updated_date"></span></th>
                     </tr>
                 </thead>
                 <tbody id="ticketsBody">
-                    <tr><td colspan="5" class="loading">Загрузка...</td></tr>
+                    <tr><td colspan="7" class="loading">Загрузка...</td></tr>
                 </tbody>
             </table>
             <div class="pagination" id="pagination"></div>
@@ -525,7 +527,7 @@
             const search = document.getElementById('searchInput').value;
 
             document.getElementById('ticketsBody').innerHTML =
-                '<tr><td colspan="5" class="loading">Загрузка...</td></tr>';
+                '<tr><td colspan="7" class="loading">Загрузка...</td></tr>';
 
             showLoading('Загрузка заявок…');
 
@@ -568,7 +570,7 @@
                 const resultsInfo = document.getElementById('searchResultsInfo');
 
                 if (data.tickets.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="5" class="empty">Заявки не найдены</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="7" class="empty">Заявки не найдены</td></tr>';
                     if (resultsInfo) resultsInfo.style.display = 'none';
                 } else {
                     tbody.innerHTML = data.tickets.map((t, idx) => {
@@ -576,10 +578,12 @@
                         const taskBtn = (currentTab === 'active')
                             ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
-                        return `<tr style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
+                        return `<tr class="${t.component ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
                             <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}</span></td>
                             <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
+                            <td data-label="Требуется">${t.required_action || '—'}</td>
+                            <td data-label="Комплектующее">${t.component || '—'}</td>
                             <td data-label="Кабинет">${t.cabinet ? t.office + ' / ' + t.cabinet : (t.office || '—')}</td>
                             <td data-label="Обновлено">${formatDate(t.last_updated_date)}</td>
                         </tr>`;

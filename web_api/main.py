@@ -50,6 +50,7 @@ from auth.router import router as auth_router
 from auth.models import Permission
 
 # Импорт системы мониторинга аварийных завершений
+from utils.helpers import abbreviate_office
 from utils.crash_monitor import (
     install_crash_monitor,
     uninstall_crash_monitor,
@@ -432,8 +433,15 @@ async def api_get_tickets(
 
             rows.sort(key=get_match_level)
 
+        # Применяем сокращение адресов офисов для отображения в списке
+        tickets_data = []
+        for r in rows:
+            ticket_dict = dict(r)
+            ticket_dict['office'] = abbreviate_office(ticket_dict.get('office'))
+            tickets_data.append(ticket_dict)
+
         return {
-            "tickets": [dict(r) for r in rows],
+            "tickets": tickets_data,
             "total": total,
             "page": page,
             "per_page": per_page,
@@ -825,8 +833,15 @@ async def api_get_task_tickets(
         db.cursor.execute(query, [per_page, offset])
         rows = db.cursor.fetchall()
 
+        # Применяем сокращение адресов офисов для отображения в списке
+        tickets_data = []
+        for r in rows:
+            ticket_dict = dict(r)
+            ticket_dict['office'] = abbreviate_office(ticket_dict.get('office'))
+            tickets_data.append(ticket_dict)
+
         return {
-            "tickets": [dict(r) for r in rows],
+            "tickets": tickets_data,
             "total": total,
             "page": page,
             "per_page": per_page,
