@@ -434,7 +434,21 @@ async def api_get_tickets(
                    CASE WHEN EXISTS (
                        SELECT 1 FROM user_comments uc
                        WHERE uc.ticket_number = t.ticket_number
-                   ) THEN TRUE ELSE FALSE END AS has_comments
+                   ) THEN TRUE ELSE FALSE END AS has_comments,
+                   COALESCE(
+                       (
+                           SELECT th.received_date
+                           FROM ticket_history th
+                           WHERE th.ticket_number = t.ticket_number
+                             AND (
+                                 th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                                 OR th.status = 'Выполнено'
+                             )
+                           ORDER BY th.received_date DESC
+                           LIMIT 1
+                       ),
+                       CASE WHEN t.status = 'Выполнено' THEN t.last_updated_date ELSE NULL END
+                   ) AS completed_at
             FROM tickets t
         """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
@@ -645,8 +659,8 @@ async def api_complete_ticket(ticket_number: str, request: Request):
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
-        changed_fields = {"status": "Выполнено", "is_archived": False}
         now = datetime.now()
+        changed_fields = {"status": "Выполнено", "is_archived": False, "completed_at": now.isoformat()}
 
         # Сохраняем в историю
         from database.models import TicketHistoryRecord
@@ -979,7 +993,25 @@ async def api_get_task_tickets(
                    CASE WHEN EXISTS (
                        SELECT 1 FROM ticket_images ti
                        WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE
-                   ) THEN TRUE ELSE FALSE END AS has_files
+                   ) THEN TRUE ELSE FALSE END AS has_files,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM user_comments uc
+                       WHERE uc.ticket_number = t.ticket_number
+                   ) THEN TRUE ELSE FALSE END AS has_comments,
+                   COALESCE(
+                       (
+                           SELECT th.received_date
+                           FROM ticket_history th
+                           WHERE th.ticket_number = t.ticket_number
+                             AND (
+                                 th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                                 OR th.status = 'Выполнено'
+                             )
+                           ORDER BY th.received_date DESC
+                           LIMIT 1
+                       ),
+                       CASE WHEN t.status = 'Выполнено' THEN t.last_updated_date ELSE NULL END
+                   ) AS completed_at
             FROM tickets t
             INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
         """) + SQL(f"WHERE {where_sql}") + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(

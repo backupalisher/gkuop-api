@@ -1062,8 +1062,9 @@ tr {
   border-radius: var(--radius-full);
   font-size: var(--font-size-sm);
   font-weight: var(--font-weight-medium);
-  white-space: nowrap;
+  white-space: normal;
   line-height: 1.6;
+  text-align: center;
 }
 
 .status-new { background: var(--color-status-new-bg); color: var(--color-status-new-text); }
@@ -1076,6 +1077,14 @@ tr {
 .status-completed { background: var(--color-status-completed-bg); color: var(--color-status-completed-text); }
 .status-completed::before { content: "✓ "; font-weight: var(--font-weight-bold); }
 .status-default { background: var(--color-status-default-bg); color: var(--color-status-default-text); }
+
+.completed-date {
+  display: block;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  opacity: 0.85;
+  white-space: nowrap;
+}
 
 /* ─── Ссылка на заявку ─────────────────────────────────── */
 .ticket-link {
