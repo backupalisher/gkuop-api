@@ -12,7 +12,7 @@ from datetime import datetime
 from contextlib import contextmanager
 from functools import wraps
 
-from .models import Ticket, TicketComment, TicketHistoryRecord, TicketImage
+from .models import Ticket, TicketComment, TicketHistoryRecord, TicketImage, UserComment
 
 logger = logging.getLogger(__name__)
 
@@ -259,6 +259,21 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_images_ticket ON ticket_images(ticket_number);
             """,
             """
+            CREATE TABLE IF NOT EXISTS user_comments
+            (
+                id SERIAL PRIMARY KEY,
+                ticket_number VARCHAR(20) REFERENCES tickets(ticket_number) ON DELETE CASCADE,
+                author_username VARCHAR(100) NOT NULL,
+                author_name VARCHAR(200) NOT NULL,
+                comment_text TEXT NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_user_comments_ticket ON user_comments(ticket_number);
+            CREATE INDEX IF NOT EXISTS idx_user_comments_created ON user_comments(created_at);
+            """,
+            """
             CREATE TABLE IF NOT EXISTS rebuild_checkpoint
             (
                 id SERIAL PRIMARY KEY,
@@ -290,7 +305,7 @@ class DatabaseManager:
               AND d.deptype = 'a'
               AND t.relname IN (
                   'tickets', 'ticket_comments', 'ticket_history',
-                  'ticket_tasks', 'ticket_images', 'rebuild_checkpoint',
+                  'ticket_tasks', 'ticket_images', 'user_comments', 'rebuild_checkpoint',
                   'users', 'permissions', 'user_permissions', 'user_office_permissions'
               )
         """)
@@ -670,7 +685,7 @@ class DatabaseManager:
             self.connection.commit()
             old_autocommit = self.connection.autocommit
             self.connection.set_session(autocommit=True)
-            self.cursor.execute("DROP TABLE IF EXISTS ticket_history, ticket_comments, tickets CASCADE")
+            self.cursor.execute("DROP TABLE IF EXISTS ticket_history, ticket_comments, user_comments, tickets CASCADE")
             self.connection.set_session(autocommit=old_autocommit)
             print("✓ Все таблицы удалены")
             return True
@@ -700,8 +715,8 @@ class DatabaseManager:
             sequences = [r['sequence_name'] for r in self.cursor.fetchall()]
             log_step("Получение списка sequences", "OK", f"Найдено: {len(sequences)}")
 
-            self.cursor.execute("DROP TABLE IF EXISTS ticket_history, ticket_comments, tickets CASCADE")
-            log_step("Удаление таблиц (CASCADE)", "OK", "ticket_history, ticket_comments, tickets")
+            self.cursor.execute("DROP TABLE IF EXISTS ticket_history, ticket_comments, user_comments, tickets CASCADE")
+            log_step("Удаление таблиц (CASCADE)", "OK", "ticket_history, ticket_comments, user_comments, tickets")
 
             for seq in sequences:
                 self.cursor.execute(SQL("ALTER SEQUENCE IF EXISTS {} RESTART WITH 1").format(Identifier(seq)))
@@ -715,13 +730,13 @@ class DatabaseManager:
             self.cursor.execute("""
                 SELECT COUNT(*) as cnt FROM information_schema.tables
                 WHERE table_schema = 'public'
-                  AND table_name IN ('tickets', 'ticket_comments', 'ticket_history')
+                  AND table_name IN ('tickets', 'ticket_comments', 'ticket_history', 'user_comments')
             """)
             tables_count = self.cursor.fetchone()['cnt']
-            if tables_count < 3:
-                raise Exception(f"Создано только {tables_count}/3 таблиц")
+            if tables_count < 4:
+                raise Exception(f"Создано только {tables_count}/4 таблиц")
 
-            for table in ['tickets', 'ticket_comments', 'ticket_history']:
+            for table in ['tickets', 'ticket_comments', 'ticket_history', 'user_comments']:
                 self.cursor.execute(SQL("SELECT COUNT(*) as cnt FROM {}").format(Identifier(table)))
                 cnt = self.cursor.fetchone()['cnt']
                 if cnt != 0:
@@ -746,7 +761,7 @@ class DatabaseManager:
         """Верификация целостности данных после загрузки."""
         result = {'checks': [], 'success': True, 'summary': {}}
         try:
-            for table in ['tickets', 'ticket_comments', 'ticket_history']:
+            for table in ['tickets', 'ticket_comments', 'ticket_history', 'user_comments']:
                 self.cursor.execute(SQL("SELECT COUNT(*) as cnt FROM {}").format(Identifier(table)))
                 cnt = self.cursor.fetchone()['cnt']
                 result['summary'][table] = cnt
@@ -893,6 +908,52 @@ class DatabaseManager:
         except Exception as e:
             print(f"Ошибка проверки изображений: {e}")
             return False
+
+    # ─── Методы для работы с пользовательскими комментариями ─────────
+
+    @_retry_on_db_error(max_attempts=3, base_delay=0.5)
+    def save_user_comment(self, comment: UserComment) -> Optional[int]:
+        """Сохранение комментария пользователя к заявке. Возвращает ID комментария."""
+        try:
+            self.cursor.execute(
+                "SELECT 1 FROM tickets WHERE ticket_number = %s", (comment.ticket_number,)
+            )
+            if not self.cursor.fetchone():
+                logger.error(f"Заявка {comment.ticket_number} не найдена. Невозможно добавить комментарий.")
+                return None
+
+            query = """
+                INSERT INTO user_comments (ticket_number, author_username, author_name, comment_text, created_at)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            """
+            self.cursor.execute(query, comment.get_insert_params())
+            result = self.cursor.fetchone()
+            self.connection.commit()
+            return result['id'] if result else None
+        except Exception as e:
+            logger.error(f"Ошибка сохранения комментария пользователя: {e}", exc_info=True)
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return None
+
+    def get_user_comments(self, ticket_number: str) -> List[Dict]:
+        """Получение списка комментариев пользователей для заявки (в хронологическом порядке)"""
+        try:
+            self.cursor.execute(
+                """SELECT id, ticket_number, author_username, author_name, comment_text, created_at
+                   FROM user_comments
+                   WHERE ticket_number = %s
+                   ORDER BY created_at ASC""",
+                (ticket_number,)
+            )
+            rows = self.cursor.fetchall()
+            return [dict(r) for r in rows]
+        except Exception as e:
+            logger.error(f"Ошибка получения комментариев пользователей: {e}")
+            return []
 
     def close(self):
         """Закрытие соединения"""

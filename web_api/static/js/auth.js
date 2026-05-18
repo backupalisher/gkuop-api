@@ -23,6 +23,10 @@ const AUTH = {
         if (this._initialized) return;
         this._initialized = true;
         this._loadFromStorage();
+        // Проверяем актуальность токена и permissions на сервере
+        if (this._token) {
+            this.refresh().catch(() => {});
+        }
     },
 
     /** Сохранение данных в sessionStorage */
@@ -200,6 +204,10 @@ const AUTH = {
             this._user = data.user;
             this._permissions = new Set(data.permissions || []);
             this._saveToStorage();
+            // Переприменяем PermissionGuard после обновления прав
+            if (typeof PermissionGuard !== 'undefined') {
+                PermissionGuard.apply();
+            }
             return true;
         } catch (e) {
             console.error('Auth: Ошибка обновления', e);
@@ -887,6 +895,7 @@ const UserUI = {
             'tickets': 'Заявки',
             'tasks': 'Задачи',
             'images': 'Изображения',
+            'comments': 'Комментарии',
             'users': 'Пользователи',
             'system': 'Системные',
             'other': 'Прочее',

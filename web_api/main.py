@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 from psycopg2.sql import SQL, Identifier
 
 from database.db_manager import DatabaseManager
-from database.models import TicketImage
+from database.models import TicketImage, UserComment
 from config.settings import load_config
 from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
@@ -143,6 +143,12 @@ async def lifespan(app: FastAPI):
             auth_db.db.connection.rollback()
         except Exception:
             pass
+
+    # Синхронизация разрешений всех пользователей с DEFAULT_ROLE_PERMISSIONS
+    try:
+        auth_db.sync_all_users_permissions()
+    except Exception as sync_err:
+        logger.warning(f"Не удалось синхронизировать разрешения: {sync_err}")
 
     app.state.auth_db = auth_db
     print("🔐 Модуль аутентификации инициализирован")
@@ -519,7 +525,10 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
             if img.get('thumbnail_path'):
                 img['thumbnail_url'] = f"/api/images/{img['id']}/thumbnail"
 
-        return {"ticket": ticket, "history": history, "images": images}
+        # Получаем пользовательские комментарии
+        user_comments = db.get_user_comments(ticket_number)
+
+        return {"ticket": ticket, "history": history, "images": images, "user_comments": user_comments}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -799,6 +808,79 @@ async def api_check_task(ticket_number: str):
         is_task = db.is_task(ticket_number)
         return {"is_task": is_task}
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+# ─── API эндпоинты для комментариев ────────────────────────────────
+
+
+@app.post("/api/tickets/{ticket_number}/comments")
+@require_permission(Permission.ADD_COMMENTS)
+async def api_add_comment(ticket_number: str, request: Request):
+    """Добавить комментарий к заявке от авторизованного пользователя"""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+
+    try:
+        # Проверяем существование заявки
+        existing_ticket = db.get_ticket(ticket_number)
+        if not existing_ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+
+        # Проверяем права доступа к офису заявки
+        current_user = get_current_user(request)
+        if not current_user:
+            return JSONResponse({"error": "Пользователь не авторизован"}, status_code=401)
+
+        if current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username)
+            ticket_office = existing_ticket.get('office', '')
+            if ticket_office and ticket_office not in user_offices:
+                return JSONResponse(
+                    {"error": "Недостаточно прав для комментирования данной заявки"},
+                    status_code=403
+                )
+
+        # Получаем тело запроса
+        try:
+            body = await request.json()
+        except Exception:
+            return JSONResponse({"error": "Неверный формат JSON"}, status_code=400)
+
+        comment_text = (body.get('comment_text') or '').strip()
+        if not comment_text:
+            return JSONResponse({"error": "Текст комментария не может быть пустым"}, status_code=400)
+
+        if len(comment_text) > 5000:
+            return JSONResponse({"error": "Комментарий слишком длинный (максимум 5000 символов)"}, status_code=400)
+
+        # Создаём и сохраняем комментарий
+        comment = UserComment(
+            ticket_number=ticket_number,
+            author_username=current_user.username,
+            author_name=current_user.full_name or current_user.username,
+            comment_text=comment_text,
+        )
+
+        comment_id = db.save_user_comment(comment)
+        if comment_id is None:
+            return JSONResponse({"error": "Не удалось сохранить комментарий"}, status_code=500)
+
+        # Возвращаем созданный комментарий
+        return {
+            "status": "ok",
+            "message": "Комментарий добавлен",
+            "comment": {
+                "id": comment_id,
+                "ticket_number": ticket_number,
+                "author_username": comment.author_username,
+                "author_name": comment.author_name,
+                "comment_text": comment_text,
+                "created_at": comment.created_at.isoformat() if comment.created_at else None,
+            }
+        }
+    except Exception as e:
+        logger.exception(f"Ошибка добавления комментария к заявке {ticket_number}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

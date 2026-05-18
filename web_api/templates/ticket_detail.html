@@ -602,6 +602,42 @@
 
                 html += `</div>`;
 
+                // Комментарии пользователей
+                const userComments = data.user_comments || [];
+                html += `<div class="card">
+                    <h2>Комментарии (${userComments.length})</h2>`;
+
+                if (userComments.length === 0) {
+                    html += '<div style="color: var(--color-text-muted); font-size: var(--font-size-base); margin-bottom: var(--space-4);">Комментариев пока нет</div>';
+                } else {
+                    html += `<div class="comments-list">`;
+                    for (const c of userComments) {
+                        html += `<div class="comment-item">
+                            <div class="comment-header">
+                                <span class="comment-author">${escapeHtml(c.author_name)}</span>
+                                <span class="comment-date">${formatDate(c.created_at)}</span>
+                            </div>
+                            <div class="comment-body">${escapeHtml(c.comment_text)}</div>
+                        </div>`;
+                    }
+                    html += `</div>`;
+                }
+
+                // Форма добавления комментария (только для авторизованных с правом add_comments)
+                const authData = getAuth();
+                if (authData) {
+                    html += `<div class="comment-form" data-permission="add_comments">
+                        <textarea class="comment-input" id="commentInput" placeholder="Напишите комментарий..." rows="3" maxlength="5000"></textarea>
+                        <div class="comment-form-actions">
+                            <span class="comment-char-counter"><span id="commentCharCount">0</span>/5000</span>
+                            <button class="btn btn-primary btn-sm" onclick="submitComment()">Отправить</button>
+                        </div>
+                        <div class="comment-error" id="commentError"></div>
+                    </div>`;
+                }
+
+                html += `</div>`;
+
                 // История изменений
                 html += `<div class="card">
                     <h2>История изменений (${history.length})</h2>`;
@@ -822,6 +858,59 @@
             }
         }
         const deleteImage = PermissionGuard.protectFunction(_deleteImage, 'delete_images');
+
+        // ─── Комментарии ────────────────────────────────────────────
+        async function _submitComment() {
+            const input = document.getElementById('commentInput');
+            const errorEl = document.getElementById('commentError');
+            const text = input ? input.value.trim() : '';
+
+            if (!text) {
+                if (errorEl) errorEl.textContent = 'Введите текст комментария';
+                return;
+            }
+
+            if (text.length > 5000) {
+                if (errorEl) errorEl.textContent = 'Комментарий слишком длинный (максимум 5000 символов)';
+                return;
+            }
+
+            if (errorEl) errorEl.textContent = '';
+
+            try {
+                const result = await fetchJSON(`/api/tickets/${ticketNumber}/comments`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({comment_text: text})
+                });
+
+                if (result.error) {
+                    if (errorEl) errorEl.textContent = 'Ошибка: ' + result.error;
+                    showToast('Ошибка: ' + result.error, 'error');
+                    return;
+                }
+
+                showToast('✓ Комментарий добавлен', 'success');
+                if (input) input.value = '';
+                const counter = document.getElementById('commentCharCount');
+                if (counter) counter.textContent = '0';
+                loadTicket();
+            } catch (e) {
+                if (errorEl) errorEl.textContent = 'Ошибка: ' + e.message;
+                showToast('Ошибка: ' + e.message, 'error');
+            }
+        }
+        const submitComment = PermissionGuard.protectFunction(_submitComment, 'add_comments');
+
+        // Счётчик символов для поля комментария
+        document.addEventListener('input', function(e) {
+            if (e.target && e.target.id === 'commentInput') {
+                const counter = document.getElementById('commentCharCount');
+                if (counter) {
+                    counter.textContent = e.target.value.length;
+                }
+            }
+        });
 
         // ─── Lightbox ───────────────────────────────────────────────
         function openLightbox(index) {

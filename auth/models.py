@@ -35,6 +35,9 @@ class Permission(str, Enum):
     UPLOAD_IMAGES = 'upload_images'            # Загрузка изображений
     DELETE_IMAGES = 'delete_images'            # Удаление изображений
 
+    # ─── Комментарии ────────────────────────────────────────────────
+    ADD_COMMENTS = 'add_comments'              # Добавление комментариев к заявкам
+
     # ─── Управление пользователями ───────────────────────────────
     MANAGE_USERS = 'manage_users'              # Управление пользователями (CRUD)
     MANAGE_PERMISSIONS = 'manage_permissions'  # Управление правами доступа
@@ -62,6 +65,7 @@ DEFAULT_ROLE_PERMISSIONS: Dict[UserRole, List[Permission]] = {
         Permission.MANAGE_TASKS,
         Permission.UPLOAD_IMAGES,
         Permission.DELETE_IMAGES,
+        Permission.ADD_COMMENTS,
         Permission.MANAGE_USERS,
         Permission.MANAGE_PERMISSIONS,
         Permission.VIEW_USERS,
@@ -79,6 +83,7 @@ DEFAULT_ROLE_PERMISSIONS: Dict[UserRole, List[Permission]] = {
         Permission.ASSIGN_TASKS,
         Permission.MANAGE_TASKS,
         Permission.UPLOAD_IMAGES,
+        Permission.ADD_COMMENTS,
         Permission.VIEW_USERS,
     ],
 }

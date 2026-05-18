@@ -104,6 +104,7 @@ class AuthDBManager:
         (Permission.VIEW_LOGS.value, 'Просмотр логов', 'Просмотр системных логов', 'system'),
         (Permission.REBUILD_DATA.value, 'Перестроение данных', 'Перестроение базы данных из писем', 'system'),
         (Permission.EXPORT_DATA.value, 'Экспорт данных', 'Экспорт данных из системы', 'system'),
+        (Permission.ADD_COMMENTS.value, 'Добавление комментариев', 'Добавление комментариев к заявкам', 'comments'),
     ]
 
     def __init__(self, db_manager):
@@ -402,17 +403,47 @@ class AuthDBManager:
                         pass
 
     def get_user_permissions(self, username: str) -> List[str]:
-        """Получение списка разрешений пользователя (коды)"""
+        """
+        Получение списка разрешений пользователя (коды).
+        Включает разрешения по умолчанию для роли, если они не были явно отозваны.
+        """
+        # Получаем роль пользователя
+        user = self.get_user(username)
+        if not user:
+            return []
+
+        # Получаем явно назначенные разрешения из таблицы
         self.db.cursor.execute(
-            """SELECT permission_code FROM user_permissions
-               WHERE username = %s AND granted = TRUE""",
+            """SELECT permission_code, granted FROM user_permissions
+               WHERE username = %s""",
             (username,)
         )
         rows = self.db.cursor.fetchall()
-        return [row['permission_code'] for row in rows]
+
+        # Явно назначенные (granted = TRUE)
+        explicit_granted = {row['permission_code'] for row in rows if row['granted']}
+        # Явно отозванные (granted = FALSE)
+        explicit_revoked = {row['permission_code'] for row in rows if not row['granted']}
+
+        # Разрешения по умолчанию для роли
+        default_perms = DEFAULT_ROLE_PERMISSIONS.get(user.role, [])
+        default_codes = {p.value for p in default_perms}
+
+        # Результат: явно назначенные + (разрешения роли, которые не были явно отозваны)
+        result = explicit_granted | (default_codes - explicit_revoked)
+
+        return sorted(result)
 
     def get_user_permissions_detailed(self, username: str) -> List[Dict]:
-        """Получение детального списка разрешений пользователя"""
+        """
+        Получение детального списка разрешений пользователя.
+        Включает разрешения по умолчанию для роли, если они не были явно отозваны.
+        """
+        user = self.get_user(username)
+        if not user:
+            return []
+
+        # Получаем явно назначенные разрешения из таблицы
         self.db.cursor.execute(
             """SELECT up.permission_code, up.granted,
                       p.name, p.description, p.category
@@ -423,7 +454,35 @@ class AuthDBManager:
             (username,)
         )
         rows = self.db.cursor.fetchall()
-        return [dict(r) for r in rows]
+
+        # Явно назначенные (granted = TRUE)
+        explicit_granted = {r['permission_code'] for r in rows if r['granted']}
+        # Явно отозванные (granted = FALSE)
+        explicit_revoked = {r['permission_code'] for r in rows if not r['granted']}
+
+        # Разрешения по умолчанию для роли
+        default_perms = DEFAULT_ROLE_PERMISSIONS.get(user.role, [])
+        default_codes = {p.value for p in default_perms}
+
+        # Результат: явно назначенные + (разрешения роли, которые не были явно отозваны)
+        effective_codes = explicit_granted | (default_codes - explicit_revoked)
+
+        # Получаем полный каталог разрешений для отображения
+        self.db.cursor.execute(
+            "SELECT code, name, description, category FROM permissions ORDER BY category, name"
+        )
+        all_perms = self.db.cursor.fetchall()
+
+        result = []
+        for p in all_perms:
+            result.append({
+                'permission_code': p['code'],
+                'granted': p['code'] in effective_codes,
+                'name': p['name'],
+                'description': p['description'],
+                'category': p['category'],
+            })
+        return result
 
     def get_all_permissions_catalog(self) -> List[Dict]:
         """Получение полного каталога разрешений"""
@@ -633,6 +692,40 @@ class AuthDBManager:
             logger.warning(f"⛔ Доступ запрещён: {username} не имеет права {permission.value}")
             return False
         return True
+
+    def sync_all_users_permissions(self):
+        """
+        Синхронизация разрешений всех существующих пользователей
+        в соответствии с их ролью и DEFAULT_ROLE_PERMISSIONS.
+        Вызывается при старте приложения для приведения БД в актуальное состояние.
+        """
+        try:
+            self.db.cursor.execute(
+                "SELECT username, role FROM users WHERE is_active = TRUE"
+            )
+            users = self.db.cursor.fetchall()
+            synced = 0
+            for user_row in users:
+                username = user_row['username']
+                role = UserRole(user_row['role'])
+                default_perms = DEFAULT_ROLE_PERMISSIONS.get(role, [])
+                for perm in default_perms:
+                    self.db.cursor.execute(
+                        """INSERT INTO user_permissions (username, permission_code, granted)
+                           VALUES (%s, %s, TRUE)
+                           ON CONFLICT (username, permission_code) DO NOTHING""",
+                        (username, perm.value)
+                    )
+                synced += 1
+            self.db.connection.commit()
+            if synced > 0:
+                logger.info(f"✓ Синхронизированы разрешения для {synced} пользователей")
+        except Exception as e:
+            logger.error(f"✗ Ошибка синхронизации разрешений пользователей: {e}")
+            try:
+                self.db.connection.rollback()
+            except Exception:
+                pass
 
     # ─── Вспомогательные методы ──────────────────────────────────
 

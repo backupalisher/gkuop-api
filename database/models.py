@@ -175,6 +175,31 @@ class TicketHistoryRecord:
 
 
 @dataclass
+class UserComment:
+    """Модель комментария пользователя к заявке (из веб-интерфейса)"""
+    ticket_number: str
+    author_username: str
+    author_name: str
+    comment_text: str
+    created_at: Optional[datetime] = None
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict:
+        """Преобразование в словарь"""
+        return asdict(self)
+
+    def get_insert_params(self) -> tuple:
+        """Параметры для вставки в БД"""
+        return (
+            self.ticket_number,
+            self.author_username,
+            self.author_name,
+            self.comment_text,
+            self.created_at or datetime.now(),
+        )
+
+
+@dataclass
 class TicketImage:
     """Модель изображения, прикреплённого к заявке"""
     ticket_number: str
