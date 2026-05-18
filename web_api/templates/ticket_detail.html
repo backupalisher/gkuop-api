@@ -419,11 +419,21 @@
                 const commentCount = data.comment_count || 0;
 
                 // Собираем актуальное состояние заявки из тикета + всех diff-записей истории
+                // ВАЖНО: Поля, которые НЕ должны перезаписываться из истории (актуальное значение — в таблице tickets)
+                const _fieldsFromTicket = new Set(['status', 'assigned_to', 'priority', 'office', 'cabinet',
+                    'required_action', 'cause', 'fault_description', 'work_done', 'tech_conclusion',
+                    'inventory_number', 'department', 'contact_phone', 'author_name', 'position']);
                 const s = { ...t, _is_task: taskData.is_task === true };
                 const snapshots = history.filter(h => h.type === 'snapshot');
                 for (const snap of snapshots) {
                     if (snap.changed_fields && typeof snap.changed_fields === 'object') {
-                        Object.assign(s, snap.changed_fields);
+                        // Применяем только те поля из changed_fields, которых нет в tickets,
+                        // чтобы не перезаписать актуальное состояние устаревшими данными
+                        for (const [key, value] of Object.entries(snap.changed_fields)) {
+                            if (!_fieldsFromTicket.has(key)) {
+                                s[key] = value;
+                            }
+                        }
                     }
                 }
 
