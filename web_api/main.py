@@ -547,12 +547,38 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
         user_comments = db.get_user_comments(ticket_number)
         comment_count = len(user_comments)
 
+        # Добавляем completed_at — дату фактического завершения заявки
+        completed_at = None
+        if ticket.get('status') == 'Выполнено':
+            try:
+                db.cursor.execute("""
+                    SELECT th.received_date
+                    FROM ticket_history th
+                    WHERE th.ticket_number = %s
+                      AND (
+                          th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                          OR th.status = 'Выполнено'
+                      )
+                    ORDER BY th.received_date DESC
+                    LIMIT 1
+                """, (ticket_number,))
+                row = db.cursor.fetchone()
+                if row:
+                    completed_at = row['received_date'].isoformat() if hasattr(row['received_date'], 'isoformat') else str(row['received_date'])
+            except Exception:
+                pass
+            if not completed_at:
+                completed_at = ticket.get('last_updated_date')
+                if hasattr(completed_at, 'isoformat'):
+                    completed_at = completed_at.isoformat()
+
         return {
             "ticket": ticket,
             "history": history,
             "images": images,
             "user_comments": user_comments,
-            "comment_count": comment_count
+            "comment_count": comment_count,
+            "completed_at": completed_at
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -660,7 +686,10 @@ async def api_complete_ticket(ticket_number: str, request: Request):
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
         now = datetime.now()
-        changed_fields = {"status": "Выполнено", "is_archived": False, "completed_at": now.isoformat()}
+        # Для истории сохраняем completed_at (в таблице ticket_history поле changed_fields — JSON)
+        history_changed_fields = {"status": "Выполнено", "is_archived": False, "completed_at": now.isoformat()}
+        # Для обновления таблицы tickets — только поля, существующие в таблице (колонки completed_at нет)
+        changed_fields = {"status": "Выполнено", "is_archived": False}
 
         # Сохраняем в историю
         from database.models import TicketHistoryRecord
@@ -668,7 +697,7 @@ async def api_complete_ticket(ticket_number: str, request: Request):
             ticket_number=ticket_number,
             received_date=now,
             email_hash=f"manual_complete_{now.timestamp()}",
-            changed_fields=changed_fields,
+            changed_fields=history_changed_fields,
             subject=existing_ticket.get('subject'),
             inventory_number=existing_ticket.get('inventory_number'),
             printer_model=existing_ticket.get('printer_model'),

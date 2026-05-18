@@ -460,7 +460,7 @@
                         </div>
                         <div class="info-item">
                             <div class="label">Статус</div>
-                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${s.status || '—'}</span></div>
+                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${s.status || '—'}${s.status && statusClass(s.status) === 'status-completed' && data.completed_at ? `<br><span class="completed-date">${formatDate(data.completed_at)}</span>` : ''}</span></div>
                         </div>
                         ${s.soglasovano_line ? `<div class="info-item" style="grid-column: 1 / -1;">
                             <div class="label">Согласование</div>
