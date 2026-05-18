@@ -49,6 +49,10 @@
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
 
+        // Глобальные переменные состояния заявки (устанавливаются в loadTicket)
+        let s = null;   // актуальное состояние заявки (с учётом истории)
+        let data = null; // полные данные загрузки (ticket, history, images, etc.)
+
         // ─── Индикатор загрузки ──────────────────────────────
         let _isLoading = false;
 
@@ -301,11 +305,23 @@
         // ─── Защищённые функции (с проверкой прав через PermissionGuard) ──
         // Оригинальные функции
         async function _completeTicket() {
+            // Проверка: если заявка уже выполнена — блокируем на клиенте
+            if (s && s.status === 'Выполнено' && data && data.completed_at) {
+                showToast('⚠️ Заявка уже выполнена', 'warning');
+                return;
+            }
             const confirmed = await showModal('Выполнение заявки', 'Отметить заявку как выполненную?');
             if (!confirmed) return;
             try {
-                const data = await fetchJSON(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
-                if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
+                const result = await fetchJSON(`/api/tickets/${ticketNumber}/complete`, { method: 'POST' });
+                if (result.error) {
+                    if (result.code === 'ALREADY_COMPLETED') {
+                        showToast('⚠️ Заявка уже выполнена', 'warning');
+                    } else {
+                        showToast('Ошибка: ' + result.error, 'error');
+                    }
+                    return;
+                }
                 showToast('✓ Заявка отмечена как выполненная', 'success');
                 markListNeedsRefresh();
                 try { localStorage.setItem('gkuop_task_update', Date.now().toString()); } catch (_) {}
@@ -313,6 +329,24 @@
             } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
         const completeTicket = PermissionGuard.protectFunction(_completeTicket, 'complete_tickets');
+
+        // ─── Отмена выполнения заявки (только admin) ────────────────
+        async function _uncompleteTicket() {
+            const confirmed = await showModal('Отмена выполнения', 'Вы уверены, что хотите отменить выполнение заявки?');
+            if (!confirmed) return;
+            try {
+                const result = await fetchJSON(`/api/tickets/${ticketNumber}/uncomplete`, { method: 'POST' });
+                if (result.error) {
+                    showToast('Ошибка: ' + result.error, 'error');
+                    return;
+                }
+                showToast('✓ Выполнение заявки отменено', 'success');
+                markListNeedsRefresh();
+                try { localStorage.setItem('gkuop_task_update', Date.now().toString()); } catch (_) {}
+                loadTicket();
+            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+        const uncompleteTicket = PermissionGuard.protectFunction(_uncompleteTicket, 'admin_access');
 
         async function _toggleTask() {
             try {
@@ -403,17 +437,19 @@
         async function loadTicket() {
             showLoading('Загрузка заявки…');
             try {
-                const [data, taskData] = await Promise.all([
+                const [responseData, taskData] = await Promise.all([
                     fetchJSON(`/api/tickets/${ticketNumber}`),
                     fetchJSON(`/api/tickets/${ticketNumber}/task`).catch(() => ({ is_task: false }))
                 ]);
 
-                if (data.error) {
+                if (responseData.error) {
                     document.getElementById('content').innerHTML =
-                        `<div class="error">${data.error}</div>`;
+                        `<div class="error">${responseData.error}</div>`;
                     return;
                 }
 
+                // Сохраняем в глобальные переменные для использования в других функциях
+                data = responseData;
                 const t = data.ticket;
                 const history = data.history || [];
                 const commentCount = data.comment_count || 0;
@@ -423,7 +459,7 @@
                 const _fieldsFromTicket = new Set(['status', 'assigned_to', 'priority', 'office', 'cabinet',
                     'required_action', 'cause', 'fault_description', 'work_done', 'tech_conclusion',
                     'inventory_number', 'department', 'contact_phone', 'author_name', 'position']);
-                const s = { ...t, _is_task: taskData.is_task === true };
+                s = { ...t, _is_task: taskData.is_task === true };
                 const snapshots = history.filter(h => h.type === 'snapshot');
                 for (const snap of snapshots) {
                     if (snap.changed_fields && typeof snap.changed_fields === 'object') {
@@ -453,7 +489,14 @@
                         const isTask = s._is_task === true;
                         html += `<button class="btn btn-action btn-task ${isTask ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTask()">${isTask ? '✅ Задача' : '🔵 Задача'}</button>`;
                     }
-                    html += `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
+                    // Скрываем кнопку "Выполнено" для уже выполненных заявок
+                    if (s.status === 'Выполнено' && data.completed_at) {
+                        html += `<button class="btn btn-action btn-complete btn-completed-disabled" disabled title="Заявка уже выполнена ${formatDate(data.completed_at)}">✓ Выполнено</button>`;
+                        // Кнопка "Отменить выполнение" — только для администраторов
+                        html += `<button class="btn btn-action btn-uncomplete" data-permission="admin_access" onclick="uncompleteTicket()">↩ Отменить выполнение</button>`;
+                    } else {
+                        html += `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
+                    }
                     html += `<button class="btn btn-action btn-archive" data-permission="archive_tickets" onclick="archiveTicket()">📦 В архив</button>`;
                 } else {
                     html += `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">↩ Восстановить</button>`;

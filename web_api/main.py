@@ -144,6 +144,40 @@ async def lifespan(app: FastAPI):
         except Exception:
             pass
 
+    # Миграция: добавление колонок last_status, completed_by, completed_at в таблицу tickets
+    try:
+        db.cursor.execute("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'tickets' AND column_name = 'last_status'
+                ) THEN
+                    ALTER TABLE tickets ADD COLUMN last_status VARCHAR(100);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'tickets' AND column_name = 'completed_by'
+                ) THEN
+                    ALTER TABLE tickets ADD COLUMN completed_by VARCHAR(200);
+                END IF;
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'tickets' AND column_name = 'completed_at'
+                ) THEN
+                    ALTER TABLE tickets ADD COLUMN completed_at TIMESTAMP;
+                END IF;
+            END $$;
+        """)
+        db.connection.commit()
+        logger.info("Миграция БД: колонки last_status, completed_by, completed_at добавлены/проверены")
+    except Exception as mig_err:
+        logger.warning(f"Не удалось выполнить миграцию БД: {mig_err}")
+        try:
+            db.connection.rollback()
+        except Exception:
+            pass
+
     # Синхронизация разрешений всех пользователей с DEFAULT_ROLE_PERMISSIONS
     try:
         auth_db.sync_all_users_permissions()
@@ -448,7 +482,9 @@ async def api_get_tickets(
                            LIMIT 1
                        ),
                        CASE WHEN t.status = 'Выполнено' THEN t.last_updated_date ELSE NULL END
-                   ) AS completed_at
+                   ) AS completed_at,
+                   t.last_status,
+                   t.completed_by
             FROM tickets t
         """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
@@ -572,13 +608,19 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
                 if hasattr(completed_at, 'isoformat'):
                     completed_at = completed_at.isoformat()
 
+        # Добавляем last_status и completed_by из ticket
+        last_status = ticket.get('last_status')
+        completed_by = ticket.get('completed_by')
+
         return {
             "ticket": ticket,
             "history": history,
             "images": images,
             "user_comments": user_comments,
             "comment_count": comment_count,
-            "completed_at": completed_at
+            "completed_at": completed_at,
+            "last_status": last_status,
+            "completed_by": completed_by
         }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -685,11 +727,56 @@ async def api_complete_ticket(ticket_number: str, request: Request):
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
+        # ─── Защита от повторного выполнения ────────────────────────────
+        if existing_ticket.get('status') == 'Выполнено':
+            # Проверяем, есть ли completed_at в истории
+            _already_completed = False
+            try:
+                db.cursor.execute("""
+                    SELECT 1 FROM ticket_history th
+                    WHERE th.ticket_number = %s
+                      AND (
+                          th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                          OR th.status = 'Выполнено'
+                      )
+                    LIMIT 1
+                """, (ticket_number,))
+                _already_completed = db.cursor.fetchone() is not None
+            except Exception:
+                pass
+            if _already_completed:
+                logger.warning(
+                    f"Попытка повторного выполнения заявки #{ticket_number} "
+                    f"(текущий статус: {existing_ticket.get('status')})"
+                )
+                return JSONResponse(
+                    {
+                        "error": "Заявка уже выполнена",
+                        "code": "ALREADY_COMPLETED",
+                        "ticket_number": ticket_number,
+                    },
+                    status_code=409,
+                )
+        # ─── Конец защиты от повторного выполнения ───────────────────────
+
         now = datetime.now()
+        # Получаем текущего пользователя для записи completed_by
+        current_user = get_current_user(request)
+        completed_by_username = current_user.username if current_user else 'unknown'
+
+        # Сохраняем предыдущий статус в last_status перед изменением
+        previous_status = existing_ticket.get('status', '')
+
         # Для истории сохраняем completed_at (в таблице ticket_history поле changed_fields — JSON)
         history_changed_fields = {"status": "Выполнено", "is_archived": False, "completed_at": now.isoformat()}
-        # Для обновления таблицы tickets — только поля, существующие в таблице (колонки completed_at нет)
-        changed_fields = {"status": "Выполнено", "is_archived": False}
+        # Для обновления таблицы tickets — статус, last_status, completed_by, completed_at
+        changed_fields = {
+            "status": "Выполнено",
+            "is_archived": False,
+            "last_status": previous_status,
+            "completed_by": completed_by_username,
+            "completed_at": now,
+        }
 
         # Сохраняем в историю
         from database.models import TicketHistoryRecord
@@ -762,6 +849,105 @@ async def api_complete_ticket(ticket_number: str, request: Request):
             result["uploaded_images"] = uploaded_images
         return result
     except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.post("/api/tickets/{ticket_number}/uncomplete")
+async def api_uncomplete_ticket(ticket_number: str, request: Request):
+    """Отменить выполнение заявки (только для администраторов).
+    Восстанавливает предыдущий статус из last_status, очищает completed_at и completed_by.
+    """
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+
+    try:
+        # Проверяем права администратора
+        current_user = get_current_user(request)
+        if not current_user or current_user.role != UserRole.ADMIN:
+            return JSONResponse(
+                {"error": "Только администраторы могут отменять выполнение заявки"},
+                status_code=403,
+            )
+
+        existing_ticket = db.get_ticket(ticket_number)
+        if not existing_ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+
+        # Проверяем, что заявка выполнена
+        if existing_ticket.get('status') != 'Выполнено':
+            return JSONResponse(
+                {"error": "Отменить выполнение можно только для заявок со статусом «Выполнено»"},
+                status_code=400,
+            )
+
+        # Получаем предыдущий статус из last_status
+        previous_status = existing_ticket.get('last_status')
+        if not previous_status:
+            # Если last_status не сохранён (старые заявки), используем статус по умолчанию
+            previous_status = 'Новая заявка'
+
+        now = datetime.now()
+        username = current_user.username if current_user else 'unknown'
+
+        # Обновляем заявку: восстанавливаем статус, очищаем completed_at и completed_by
+        db.cursor.execute("""
+            UPDATE tickets
+            SET status = %s,
+                last_status = NULL,
+                completed_by = NULL,
+                completed_at = NULL
+            WHERE ticket_number = %s
+        """, (previous_status, ticket_number))
+        db.connection.commit()
+
+        # Создаём запись в истории с типом uncompleted
+        from database.models import TicketHistoryRecord
+        history_record = TicketHistoryRecord(
+            ticket_number=ticket_number,
+            received_date=now,
+            email_hash=f"uncomplete_{now.timestamp()}",
+            changed_fields={
+                "status": previous_status,
+                "action": "uncompleted",
+                "description": "Администратор отменил выполнение заявки",
+                "uncompleted_by": username,
+            },
+            subject=existing_ticket.get('subject'),
+            inventory_number=existing_ticket.get('inventory_number'),
+            printer_model=existing_ticket.get('printer_model'),
+            office=existing_ticket.get('office'),
+            cabinet=existing_ticket.get('cabinet'),
+            component=existing_ticket.get('component'),
+            status=previous_status,
+            priority=existing_ticket.get('priority'),
+            assigned_to=existing_ticket.get('assigned_to'),
+            author_name=existing_ticket.get('author_name'),
+            contact_phone=existing_ticket.get('contact_phone'),
+            department=existing_ticket.get('department'),
+            position=existing_ticket.get('position'),
+            current_note=existing_ticket.get('current_note'),
+            soglasovano_line=existing_ticket.get('soglasovano_line'),
+            required_action=existing_ticket.get('required_action'),
+            cause=existing_ticket.get('cause'),
+            fault_description=existing_ticket.get('fault_description'),
+            work_done=existing_ticket.get('work_done'),
+            tech_conclusion=existing_ticket.get('tech_conclusion'),
+        )
+        db.save_history_record(history_record)
+
+        logger.info(
+            f"Администратор {username} отменил выполнение заявки #{ticket_number}. "
+            f"Статус восстановлен: {previous_status}"
+        )
+
+        updated_ticket = db.get_ticket(ticket_number)
+        return {
+            "status": "ok",
+            "message": "Выполнение заявки отменено",
+            "ticket": updated_ticket,
+        }
+    except Exception as e:
+        logger.exception(f"Ошибка отмены выполнения заявки {ticket_number}")
         return JSONResponse({"error": str(e)}, status_code=500)
 
 

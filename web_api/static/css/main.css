@@ -547,6 +547,27 @@ a:hover { text-decoration: underline; }
 
 .btn-complete { background: var(--color-success); color: var(--color-text-inverse); border-color: var(--color-success); }
 .btn-complete:hover { background: #059669; border-color: #059669; box-shadow: 0 4px 12px rgba(16,185,129,0.4); }
+.btn-completed-disabled,
+.btn-completed-disabled:hover,
+.btn-completed-disabled:active {
+  background: var(--color-bg-tertiary, #e5e7eb) !important;
+  color: var(--color-text-tertiary, #9ca3af) !important;
+  border-color: var(--color-border, #d1d5db) !important;
+  cursor: not-allowed !important;
+  transform: none !important;
+  box-shadow: none !important;
+  opacity: 0.7;
+}
+.btn-uncomplete {
+    background: #dc2626;
+    color: var(--color-text-inverse);
+    border-color: #dc2626;
+}
+.btn-uncomplete:hover {
+    background: #b91c1c;
+    border-color: #b91c1c;
+    box-shadow: 0 4px 12px rgba(220,38,38,0.4);
+}
 .btn-archive { background: var(--color-warning); color: var(--color-text-inverse); border-color: var(--color-warning); }
 .btn-archive:hover { background: #d97706; border-color: #d97706; box-shadow: 0 4px 12px rgba(245,158,11,0.4); }
 .btn-restore { background: var(--color-info); color: var(--color-text-inverse); border-color: var(--color-info); }
