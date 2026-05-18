@@ -577,19 +577,21 @@ a:hover { text-decoration: underline; }
 .btn-task.active { background: #059669; border-color: #059669; }
 .btn-task.active:hover { background: #047857; border-color: #047857; box-shadow: 0 4px 12px rgba(5,150,105,0.4); }
 
-/* Кнопка "Назад к списку" — наследует .btn */
+/* Кнопка "Назад к списку" — единый стиль с .btn-action */
 .btn-back {
   background: var(--color-info);
   color: var(--color-text-inverse);
   border-color: var(--color-info);
   text-decoration: none;
-  padding: var(--space-2) var(--space-5);
+  padding: var(--space-3) var(--space-5);
+  font-weight: var(--font-weight-semibold);
 }
 
 .btn-back:hover {
   background: #2563eb;
   border-color: #2563eb;
   color: var(--color-text-inverse);
+  text-decoration: none;
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(59,130,246,0.4);
 }
@@ -600,25 +602,27 @@ a:hover { text-decoration: underline; }
 
 /* ─── Кнопка гамбургер-меню ─────────────────────────────── */
 .hamburger-btn {
-  background: rgba(255,255,255,0.1);
-  border: 1px solid rgba(255,255,255,0.2);
+  background: rgba(0,0,0,0.05);
+  border: 1px solid #ddd;
   font-size: 20px;
+  font-weight: 600;
   cursor: pointer;
   padding: var(--space-1) var(--space-2);
   min-width: 36px;
-  min-height: 32px;
-  color: #fff;
+  min-height: 36px;
+  color: #1a1a1a;
   line-height: 1;
-  border-radius: var(--radius-md);
+  border-radius: 8px;
   transition: all var(--transition-base);
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  opacity: 1;
 }
 
 .hamburger-btn:hover {
-  background: rgba(255,255,255,0.2);
-  border-color: rgba(255,255,255,0.3);
+  background: rgba(0,0,0,0.1);
+  border-color: #ccc;
 }
 
 .hamburger-btn:focus-visible {
@@ -627,36 +631,72 @@ a:hover { text-decoration: underline; }
 }
 
 /* ─── Выпадающее меню (гамбургер) ───────────────────────── */
-.hamburger-menu {
+.dropdown-menu {
+  display: none;
   position: absolute;
-  top: 100%;
+  top: calc(100% + 4px);
   right: 0;
-  background: var(--color-surface);
+  background: #fff;
   border: 1px solid var(--color-border);
-  border-radius: var(--radius-xl);
+  border-radius: 8px;
   box-shadow: var(--shadow-lg);
   min-width: 220px;
   z-index: var(--z-dropdown, 100);
   padding: var(--space-2);
-  opacity: 0;
-  transform: translateY(-8px);
-  transition: opacity 0.25s ease-out, transform 0.25s ease-out;
-  pointer-events: none;
+}
+
+.dropdown-menu.show {
+  display: block;
+}
+
+/* ─── Гамбургер-меню на главном экране (index.html) ────── */
+.hamburger-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  min-width: 200px;
+  z-index: var(--z-dropdown, 100);
+  padding: var(--space-2);
 }
 
 .hamburger-menu.open {
-  opacity: 1;
-  transform: translateY(0);
-  pointer-events: auto;
+  display: block;
 }
 
-/* Пункты меню — стилизованы как кнопки */
-.hamburger-menu a,
-.hamburger-menu .menu-item {
+.hamburger-menu .nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: 6px;
+  transition: background var(--transition-base);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.hamburger-menu .nav-link:hover {
+  background: var(--color-bg-hover, rgba(0,0,0,0.05));
+}
+
+.hamburger-menu .menu-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+/* Пункты выпадающего меню */
+.dropdown-item {
   display: flex;
   align-items: center;
   gap: var(--space-3);
-  padding: var(--space-2) var(--space-4);
+  padding: var(--space-3) var(--space-4);
   color: var(--color-text);
   text-decoration: none;
   border-radius: var(--radius-lg);
@@ -668,43 +708,33 @@ a:hover { text-decoration: underline; }
   background: none;
   width: 100%;
   text-align: left;
-  min-height: 40px;
+  min-height: 44px;
+  white-space: nowrap;
 }
 
-.hamburger-menu a:hover,
-.hamburger-menu .menu-item:hover {
+.dropdown-item:hover {
   background: var(--color-surface-hover);
   color: var(--color-text);
 }
 
-/* Опасный пункт меню (выход, обновление данных) */
-.hamburger-menu .menu-item-danger,
-.hamburger-menu a.menu-item-danger {
-  color: var(--color-error);
-  margin-top: var(--space-1);
-  padding-top: var(--space-3);
-}
-
-/* Стилизация разделителя */
-.divider {
-  height: 1px;
-  background-color: #ccc; /* Цвет линии */
-  margin: 5px 0; /* Отступы сверху/снизу */
-}
-
-.hamburger-menu .menu-item-danger:hover,
-.hamburger-menu a.menu-item-danger:hover {
-  background: var(--color-error-bg);
+/* Опасный пункт (отменить выполнение) */
+.dropdown-item-danger {
   color: var(--color-error);
 }
 
-/* Иконки в пунктах меню */
-.hamburger-menu a .menu-icon,
-.hamburger-menu .menu-item .menu-icon {
-  font-size: 18px;
-  width: 24px;
-  text-align: center;
-  flex-shrink: 0;
+.dropdown-item-danger:hover {
+  background: var(--color-error-bg) !important;
+  color: var(--color-error) !important;
+}
+
+/* Предупреждающий пункт (в архив) */
+.dropdown-item-warning {
+  color: var(--color-warning-text);
+}
+
+.dropdown-item-warning:hover {
+  background: var(--color-warning-bg) !important;
+  color: var(--color-warning-text) !important;
 }
 
 /* ─── select-wrapper (стилизованный select) ──────────────── */
@@ -863,7 +893,7 @@ a:hover { text-decoration: underline; }
 }
 
 .tab-btn .tab-icon {
-  font-size: var(--font-size-lg);
+  font-size: 26px;
   line-height: 1;
 }
 
@@ -1109,15 +1139,15 @@ tr {
 
 /* ─── Ссылка на заявку ─────────────────────────────────── */
 .ticket-link {
-  color: var(--color-primary);
+  color: #1976d2;
   text-decoration: none;
   font-weight: var(--font-weight-semibold);
   transition: color var(--transition-fast);
 }
 
 .ticket-link:hover {
-  color: var(--color-primary-hover);
-  text-decoration: underline;
+  color: #1565c0;
+  text-decoration: none;
 }
 
 /* ─── Пагинация ────────────────────────────────────────── */
@@ -1377,10 +1407,26 @@ tr {
 .action-buttons {
   display: flex;
   gap: var(--space-3);
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   margin-bottom: var(--space-5);
-  justify-content: flex-end;
+  justify-content: space-between;
   align-items: center;
+}
+
+/* Группа кнопок, прижатая к правому краю */
+.action-buttons-right {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin-left: auto;
+}
+
+/* Обёртка для гамбургер-меню (кнопка + выпадашка) */
+.hamburger-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  z-index: var(--z-dropdown, 100);
 }
 
 /* Кнопка переключения задачи в списке заявок */
@@ -2531,6 +2577,31 @@ tr {
     grid-template-columns: 1fr;
   }
 
+  /* Мобильные кнопки действий — компактный единый ряд */
+  .action-buttons {
+    gap: var(--space-2);
+    flex-wrap: nowrap;
+    padding-top: 4px;
+  }
+
+  .action-buttons-right {
+    gap: var(--space-2);
+  }
+
+  .action-buttons .btn-action {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+    min-height: 34px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .hamburger-btn {
+    min-width: 34px;
+    min-height: 34px;
+    font-size: 18px;
+  }
+
   th, td {
     padding: var(--space-2) var(--space-3);
     font-size: var(--font-size-sm);
@@ -2874,6 +2945,27 @@ tr {
     text-align: center;
     padding: var(--space-3);
     min-height: 44px;
+  }
+
+  /* Кнопки действий на узких экранах */
+  .action-buttons {
+    gap: var(--space-1);
+  }
+
+  .action-buttons-right {
+    gap: var(--space-1);
+  }
+
+  .action-buttons .btn-action {
+    padding: var(--space-1) var(--space-2);
+    font-size: var(--font-size-xs);
+    min-height: 30px;
+  }
+
+  .hamburger-btn {
+    min-width: 30px;
+    min-height: 30px;
+    font-size: 16px;
   }
 }
 

@@ -7,6 +7,7 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css?v={{ static_version }}">
     <script src="/static/js/auth.js?v={{ static_version }}"></script>
+
 </head>
 <body>
     <!-- Оверлей авторизации -->
@@ -220,6 +221,30 @@
         if (auth) {
             showApp();
         }
+
+        // ─── Гамбургер-меню + закрытие по клику вне ────────
+        document.addEventListener('click', function(e) {
+            const btn = e.target.closest('.hamburger-btn');
+            if (btn) {
+                e.stopPropagation();
+                const wrap = btn.closest('.hamburger-wrap');
+                if (!wrap) return;
+                const menu = wrap.querySelector('.dropdown-menu');
+                if (!menu) return;
+                // Закрываем все другие открытые дропдауны
+                document.querySelectorAll('.dropdown-menu.show').forEach(m => {
+                    if (m !== menu) m.classList.remove('show');
+                });
+                menu.classList.toggle('show');
+            } else {
+                // Клик вне дропдауна — закрываем все
+                document.querySelectorAll('.dropdown-menu.show').forEach(function(menu) {
+                    if (!menu.contains(e.target)) {
+                        menu.classList.remove('show');
+                    }
+                });
+            }
+        });
 
         // ─── Навигация назад к списку ───────────────────────
         function goBackToList() {
@@ -480,8 +505,9 @@
                 html += `<div class="action-buttons">`;
                 // При возврате к списку используем history.back() если есть сохранённое состояние,
                 // иначе переходим на главную. Это позволяет восстановить позицию прокрутки и фильтры.
-                html += `<a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад к списку</a>`;
-                html += `<span style="flex:1"></span>`;
+                html += `<a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад</a>`;
+                // Группа кнопок, прижатая к правому краю
+                html += `<div class="action-buttons-right">`;
                 if (!isArchived) {
                     // Кнопка "Задача 🔵" — показываем всегда, кроме случаев когда заявка уже назначена
                     const assignedTo = (s.assigned_to || '').trim();
@@ -492,15 +518,21 @@
                     // Скрываем кнопку "Выполнено" для уже выполненных заявок
                     if (s.status === 'Выполнено' && data.completed_at) {
                         html += `<button class="btn btn-action btn-complete btn-completed-disabled" disabled title="Заявка уже выполнена ${formatDate(data.completed_at)}">✓ Выполнено</button>`;
-                        // Кнопка "Отменить выполнение" — только для администраторов
-                        html += `<button class="btn btn-action btn-uncomplete" data-permission="admin_access" onclick="uncompleteTicket()">↩ Отменить выполнение</button>`;
                     } else {
                         html += `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
                     }
-                    html += `<button class="btn btn-action btn-archive" data-permission="archive_tickets" onclick="archiveTicket()">📦 В архив</button>`;
+                    // Гамбургер-меню (мобильное) — скрытые в нём кнопки
+                    html += `<div class="hamburger-wrap">
+                        <button class="hamburger-btn" aria-label="Дополнительные действия">☰</button>
+                        <div class="dropdown-menu">
+                            <button class="dropdown-item dropdown-item-danger" data-permission="admin_access" onclick="uncompleteTicket()">↩ Отменить выполнение</button>
+                            <button class="dropdown-item dropdown-item-warning" data-permission="archive_tickets" onclick="archiveTicket()">📦 В архив</button>
+                        </div>
+                    </div>`;
                 } else {
                     html += `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">↩ Восстановить</button>`;
                 }
+                html += `</div>`;
                 html += `</div>`;
 
                 // Основная информация

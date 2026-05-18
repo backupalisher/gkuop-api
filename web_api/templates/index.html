@@ -579,7 +579,7 @@
                             ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
                         return `<tr class="${t.component ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
-                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
+                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()" title="Заявка #${t.ticket_number}">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
                             <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
                             <td data-label="Требуется">${t.required_action || '—'}</td>
