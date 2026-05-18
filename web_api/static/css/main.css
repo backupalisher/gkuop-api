@@ -999,6 +999,25 @@ tr {
   color: var(--color-primary);
 }
 
+/* Иконка комментария (💬) в заголовке страницы детального просмотра */
+.comment-icon-header {
+  font-size: 0.75em;
+  margin-left: 6px;
+  color: var(--color-primary) !important;
+  vertical-align: middle;
+  display: inline;
+  line-height: inherit;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.comment-icon-header:hover {
+  opacity: 1;
+}
+
 /* Иконка комментария (💬) на странице детального просмотра */
 .comment-icon-detail {
   font-size: 0.85em;
@@ -1022,15 +1041,16 @@ tr {
 
 /* Бейдж с количеством комментариев */
 .comment-count-badge {
-  font-size: 0.7em;
+  font-size: 0.9em;
   font-weight: 600;
   background: var(--color-primary);
-  color: #fff;
+  color: #fff !important;
   border-radius: 10px;
   padding: 1px 5px;
   min-width: 16px;
   text-align: center;
   line-height: 1.4;
+  display: inline;
 }
 
 /* ─── Бейджи статусов ──────────────────────────────────── */

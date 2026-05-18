@@ -22,7 +22,7 @@
     <div class="header">
         <div class="header-inner">
             <div class="header-left">
-                <h1 class="header-title">Заявка #{{ ticket_number }}</h1>
+                <h1 class="header-title">Заявка #{{ ticket_number }}{% if comment_count and comment_count > 0 %}<span class="comment-icon-header" onclick="document.getElementById('user-comments-section').scrollIntoView({behavior:'smooth'});return false;" title="Комментарии ({{ comment_count }})">💬 <span class="comment-count-badge">{{ comment_count }}</span></span>{% endif %}</h1>
             </div>
             <div id="authIndicator" class="header-right" style="display:none"></div>
         </div>
@@ -456,7 +456,7 @@
                     <div class="info-grid">
                         <div class="info-item">
                             <div class="label">Номер заявки</div>
-                            <div class="value">#${t.ticket_number}${commentCount > 0 ? '<span class="comment-icon-detail" onclick="document.getElementById(\'user-comments-section\').scrollIntoView({behavior:\'smooth\'});return false;" title="Перейти к комментариям (' + commentCount + ')">💬 <span class="comment-count-badge">' + commentCount + '</span></span>' : ''}</div>
+                            <div class="value">#${t.ticket_number}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Статус</div>

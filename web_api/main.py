@@ -1647,9 +1647,20 @@ async def index(request: Request):
 @app.get("/tickets/{ticket_number}", response_class=HTMLResponse)
 async def ticket_detail(request: Request, ticket_number: str):
     """Страница деталей заявки"""
+    comment_count = 0
+    if db:
+        try:
+            comment_count = db.get_user_comments_count(ticket_number)
+        except Exception:
+            pass
     return templates.TemplateResponse(
         "ticket_detail.html",
-        {"request": request, "ticket_number": ticket_number, "static_version": static_version},
+        {
+            "request": request,
+            "ticket_number": ticket_number,
+            "comment_count": comment_count,
+            "static_version": static_version,
+        },
     )
 
 
