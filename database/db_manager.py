@@ -290,7 +290,8 @@ class DatabaseManager:
               AND d.deptype = 'a'
               AND t.relname IN (
                   'tickets', 'ticket_comments', 'ticket_history',
-                  'ticket_tasks', 'ticket_images', 'rebuild_checkpoint'
+                  'ticket_tasks', 'ticket_images', 'rebuild_checkpoint',
+                  'users', 'permissions', 'user_permissions', 'user_office_permissions'
               )
         """)
         sequences = cur.fetchall()
@@ -603,6 +604,16 @@ class DatabaseManager:
         """Получить список номеров заявок, находящихся в задачах"""
         self.cursor.execute("SELECT ticket_number FROM ticket_tasks ORDER BY created_at DESC")
         return [r['ticket_number'] for r in self.cursor.fetchall()]
+
+    def get_task_offices(self) -> Dict[str, str]:
+        """Получить словарь {номер_заявки: офис} для всех заявок в задачах"""
+        self.cursor.execute("""
+            SELECT tt.ticket_number, t.office
+            FROM ticket_tasks tt
+            LEFT JOIN tickets t ON tt.ticket_number = t.ticket_number
+            ORDER BY tt.created_at DESC
+        """)
+        return {r['ticket_number']: r['office'] for r in self.cursor.fetchall()}
 
     def get_task_count(self) -> int:
         """Получить количество заявок в задачах"""

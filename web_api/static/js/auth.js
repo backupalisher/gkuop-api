@@ -702,6 +702,34 @@ const UserManager = {
         if (!response.ok) throw new Error('Ошибка загрузки каталога разрешений');
         const data = await response.json();
         return data.permissions || [];
+    },
+
+    /**
+     * Получение списка офисов, доступных пользователю.
+     * @param {string} username
+     * @returns {Promise<object>} - { username, offices, all_offices }
+     */
+    async getUserOffices(username) {
+        const response = await this._fetch(`/api/auth/users/${encodeURIComponent(username)}/offices`);
+        if (!response.ok) throw new Error('Ошибка загрузки прав на офисы');
+        return response.json();
+    },
+
+    /**
+     * Установка списка офисов для пользователя.
+     * @param {string} username
+     * @param {string[]} offices - массив адресов офисов
+     * @returns {Promise<object>}
+     */
+    async setUserOffices(username, offices) {
+        const response = await this._fetch(`/api/auth/users/${encodeURIComponent(username)}/offices`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ offices }),
+        });
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || 'Ошибка обновления прав на офисы');
+        return data;
     }
 };
 
@@ -866,37 +894,68 @@ const UserUI = {
 
         const modal = createModalOverlay();
         modal.innerHTML = `
-            <div class="modal-content modal-permissions" style="max-width:700px">
+            <div class="modal-content modal-permissions" style="max-width:750px">
                 <h3>Управление правами: ${UserUI.escapeHtml(username)}</h3>
-                <div class="permissions-container">
-                    ${Object.entries(categories).map(([cat, perms]) => `
-                        <div class="permission-category">
-                            <h4>${categoryLabels[cat] || cat}</h4>
-                            ${perms.map(p => {
-                                const granted = permMap[p.code] !== false;
-                                return `
-                                    <label class="permission-item">
-                                        <input type="checkbox" class="perm-checkbox" 
-                                               data-code="${p.code}" 
-                                               ${granted ? 'checked' : ''}>
-                                        <span class="perm-name">${p.name}</span>
-                                        <span class="perm-desc">${p.description || ''}</span>
-                                    </label>
-                                `;
-                            }).join('')}
-                        </div>
-                    `).join('')}
+                <div class="tabs" style="margin-bottom:16px;border-bottom:2px solid #eee;display:flex;gap:0;">
+                    <button class="tab-btn active" data-tab="permissions" style="padding:8px 20px;border:none;background:#f5f5f5;cursor:pointer;border-radius:4px 4px 0 0;font-weight:bold;">🔑 Разрешения</button>
+                    <button class="tab-btn" data-tab="offices" style="padding:8px 20px;border:none;background:transparent;cursor:pointer;border-radius:4px 4px 0 0;">🏢 Офисы</button>
                 </div>
-                <div class="form-actions">
-                    <button class="btn btn-primary" id="savePermissionsBtn">Сохранить</button>
-                    <button class="btn btn-secondary" id="resetPermissionsBtn">Сбросить до роли</button>
-                    <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+                <div id="tabPermissions" class="tab-content">
+                    <div class="permissions-container">
+                        ${Object.entries(categories).map(([cat, perms]) => `
+                            <div class="permission-category">
+                                <h4>${categoryLabels[cat] || cat}</h4>
+                                ${perms.map(p => {
+                                    const granted = permMap[p.code] !== false;
+                                    return `
+                                        <label class="permission-item">
+                                            <input type="checkbox" class="perm-checkbox" 
+                                                   data-code="${p.code}" 
+                                                   ${granted ? 'checked' : ''}>
+                                            <span class="perm-name">${p.name}</span>
+                                            <span class="perm-desc">${p.description || ''}</span>
+                                        </label>
+                                    `;
+                                }).join('')}
+                            </div>
+                        `).join('')}
+                    </div>
+                    <div class="form-actions" style="margin-top:16px;">
+                        <button class="btn btn-primary" id="savePermissionsBtn">Сохранить</button>
+                        <button class="btn btn-secondary" id="resetPermissionsBtn">Сбросить до роли</button>
+                        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+                    </div>
+                </div>
+                <div id="tabOffices" class="tab-content" style="display:none;">
+                    <p style="margin-bottom:12px;color:#666;">Выберите офисы, заявки по которым может просматривать пользователь:</p>
+                    <div id="officesList" style="max-height:400px;overflow-y:auto;border:1px solid #ddd;border-radius:4px;padding:8px;">
+                        <p style="color:#999;text-align:center;padding:20px;">Загрузка списка офисов...</p>
+                    </div>
+                    <div class="form-actions" style="margin-top:16px;">
+                        <button class="btn btn-primary" id="saveOfficesBtn">Сохранить</button>
+                        <button class="btn btn-ghost" onclick="this.closest('.modal-overlay').remove()">Отмена</button>
+                    </div>
                 </div>
                 <div class="form-error" style="color:red;margin-top:8px;display:none"></div>
             </div>
         `;
 
-        // Сохранение разрешений
+        // ─── Переключение табов ─────────────────────────────────
+        modal.querySelectorAll('.tab-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                modal.querySelectorAll('.tab-btn').forEach(b => {
+                    b.style.background = 'transparent';
+                    b.style.fontWeight = 'normal';
+                });
+                btn.style.background = '#f5f5f5';
+                btn.style.fontWeight = 'bold';
+                modal.querySelectorAll('.tab-content').forEach(tc => tc.style.display = 'none');
+                const tabId = btn.dataset.tab === 'permissions' ? 'tabPermissions' : 'tabOffices';
+                document.getElementById(tabId).style.display = 'block';
+            });
+        });
+
+        // ─── Сохранение разрешений ──────────────────────────────
         modal.querySelector('#savePermissionsBtn').addEventListener('click', async () => {
             const checkboxes = modal.querySelectorAll('.perm-checkbox');
             const permissionsData = {};
@@ -910,7 +969,6 @@ const UserUI = {
             try {
                 await UserManager.updatePermissions(username, permissionsData);
                 modal.remove();
-                // Показываем уведомление
                 showToast('Права пользователя обновлены', 'success');
             } catch (err) {
                 errorEl.textContent = err.message;
@@ -918,13 +976,12 @@ const UserUI = {
             }
         });
 
-        // Сброс до роли
+        // ─── Сброс до роли ──────────────────────────────────────
         modal.querySelector('#resetPermissionsBtn').addEventListener('click', async () => {
             if (!confirm('Сбросить все разрешения до стандартных для этой роли?')) return;
 
             try {
                 const result = await UserManager.resetPermissions(username);
-                // Обновляем чекбоксы
                 const newPerms = result.permissions || [];
                 const newPermMap = {};
                 newPerms.forEach(p => { newPermMap[p.permission_code] = p.granted; });
@@ -936,6 +993,67 @@ const UserUI = {
                 showToast('Права сброшены до базовых по роли', 'success');
             } catch (err) {
                 const errorEl = modal.querySelector('.form-error');
+                errorEl.textContent = err.message;
+                errorEl.style.display = 'block';
+            }
+        });
+
+        // ─── Загрузка и отображение офисов ──────────────────────
+        (async () => {
+            try {
+                const officesData = await UserManager.getUserOffices(username);
+                const userOffices = new Set(officesData.offices || []);
+                const allOffices = officesData.all_offices || [];
+
+                const officesList = modal.querySelector('#officesList');
+                officesList.innerHTML = '';
+
+                if (allOffices.length === 0) {
+                    officesList.innerHTML = '<p style="color:#999;text-align:center;padding:20px;">Нет доступных офисов в системе</p>';
+                    return;
+                }
+
+                allOffices.forEach(office => {
+                    const label = document.createElement('label');
+                    label.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;cursor:pointer;border-radius:4px;';
+                    label.addEventListener('mouseenter', () => { label.style.background = '#f5f5f5'; });
+                    label.addEventListener('mouseleave', () => { label.style.background = 'transparent'; });
+
+                    const checkbox = document.createElement('input');
+                    checkbox.type = 'checkbox';
+                    checkbox.className = 'office-checkbox';
+                    checkbox.value = office;
+                    checkbox.checked = userOffices.has(office);
+
+                    const span = document.createElement('span');
+                    span.textContent = office;
+
+                    label.appendChild(checkbox);
+                    label.appendChild(span);
+                    officesList.appendChild(label);
+                });
+            } catch (err) {
+                const officesList = modal.querySelector('#officesList');
+                officesList.innerHTML = `<p style="color:red;text-align:center;padding:20px;">Ошибка загрузки: ${UserUI.escapeHtml(err.message)}</p>`;
+            }
+        })();
+
+        // ─── Сохранение офисов ──────────────────────────────────
+        modal.querySelector('#saveOfficesBtn').addEventListener('click', async () => {
+            const checkboxes = modal.querySelectorAll('.office-checkbox');
+            const offices = [];
+            checkboxes.forEach(cb => {
+                if (cb.checked) offices.push(cb.value);
+            });
+
+            const errorEl = modal.querySelector('.form-error');
+            errorEl.style.display = 'none';
+
+            try {
+                await UserManager.setUserOffices(username, offices);
+                modal.remove();
+                showToast('Права на офисы обновлены', 'success');
+            } catch (err) {
                 errorEl.textContent = err.message;
                 errorEl.style.display = 'block';
             }

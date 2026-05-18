@@ -120,3 +120,18 @@ class UserPermission:
         if isinstance(data.get('permission'), Permission):
             data['permission'] = data['permission'].value
         return data
+
+
+@dataclass
+class UserOfficePermission:
+    """
+    Модель связи пользователя с офисом.
+    Определяет, заявки по каким офисам может просматривать пользователь.
+    Если список пуст — пользователь не видит ни одной заявки (кроме администратора).
+    """
+    username: str
+    office_address: str  # Полный адрес офиса (например, "2-й Южнопортовый пр-д, д. 27А, стр. 1")
+    id: Optional[int] = None
+
+    def to_dict(self) -> Dict:
+        return asdict(self)

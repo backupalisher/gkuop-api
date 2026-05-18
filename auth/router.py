@@ -67,6 +67,12 @@ async def api_login_new(request: Request):
     # Получаем разрешения пользователя
     permissions = auth_db.get_user_permissions(username)
 
+    # Получаем список доступных офисов (для операторов — только назначенные, для админов — все)
+    if user.role == UserRole.ADMIN:
+        offices = auth_db.get_all_offices_from_tickets()
+    else:
+        offices = auth_db.get_user_offices(username)
+
     # Создаём токен доступа
     token = create_token(username)
 
@@ -75,6 +81,7 @@ async def api_login_new(request: Request):
         "token": token,
         "user": user.to_dict(),
         "permissions": permissions,
+        "offices": offices,
     }
 
 
@@ -507,3 +514,84 @@ async def api_check_permissions(request: Request):
     results = {code: code in user_perms for code in perm_codes}
 
     return {"results": results}
+
+
+# ─── Управление правами на офисы (требуют MANAGE_PERMISSIONS) ──
+
+@router.get("/offices/catalog")
+async def api_get_offices_catalog(request: Request):
+    """Получение справочника всех офисов из заявок"""
+    auth_db = get_auth_db(request)
+    user = get_current_user(request)
+
+    if not user:
+        return JSONResponse({"error": "Не аутентифицирован"}, status_code=401)
+
+    # Только ADMIN или MANAGE_PERMISSIONS
+    if user.role != UserRole.ADMIN:
+        if not auth_db.check_permission(user.username, Permission.MANAGE_PERMISSIONS):
+            return JSONResponse({"error": "Недостаточно прав"}, status_code=403)
+
+    offices = auth_db.get_all_offices_from_tickets()
+    return {"offices": offices, "count": len(offices)}
+
+
+@router.get("/users/{username}/offices")
+async def api_get_user_offices(username: str, request: Request):
+    """Получение списка офисов, доступных пользователю"""
+    auth_db = get_auth_db(request)
+    current_user = get_current_user(request)
+
+    if not current_user:
+        return JSONResponse({"error": "Не аутентифицирован"}, status_code=401)
+
+    # Проверка прав: ADMIN или MANAGE_PERMISSIONS
+    if current_user.role != UserRole.ADMIN:
+        has_manage = auth_db.check_permission(current_user.username, Permission.MANAGE_PERMISSIONS)
+        if not has_manage and current_user.username != username:
+            return JSONResponse({"error": "Недостаточно прав"}, status_code=403)
+
+    target_user = auth_db.get_user(username)
+    if not target_user:
+        return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+
+    result = auth_db.get_offices_for_user(username)
+    return result
+
+
+@router.put("/users/{username}/offices")
+async def api_set_user_offices(username: str, request: Request):
+    """Установка списка офисов для пользователя"""
+    auth_db = get_auth_db(request)
+    current_user = get_current_user(request)
+
+    if not current_user:
+        return JSONResponse({"error": "Не аутентифицирован"}, status_code=401)
+
+    # Только ADMIN или MANAGE_PERMISSIONS
+    if current_user.role != UserRole.ADMIN:
+        if not auth_db.check_permission(current_user.username, Permission.MANAGE_PERMISSIONS):
+            return JSONResponse({"error": "Недостаточно прав"}, status_code=403)
+
+    try:
+        body = await request.json()
+    except Exception:
+        return JSONResponse({"error": "Неверный формат JSON"}, status_code=400)
+
+    target_user = auth_db.get_user(username)
+    if not target_user:
+        return JSONResponse({"error": "Пользователь не найден"}, status_code=404)
+
+    offices = body.get("offices", [])
+    if not isinstance(offices, list):
+        return JSONResponse({"error": "Поле offices должно быть массивом строк"}, status_code=400)
+
+    if auth_db.set_user_offices(username, offices):
+        result = auth_db.get_offices_for_user(username)
+        return {
+            "status": "ok",
+            "message": f"Права на офисы для {username} обновлены",
+            "data": result,
+        }
+
+    return JSONResponse({"error": "Не удалось обновить права на офисы"}, status_code=500)

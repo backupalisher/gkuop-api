@@ -10,7 +10,7 @@ from typing import Optional, List, Dict, Any
 from psycopg2.sql import SQL, Identifier
 
 from .models import (
-    User, UserRole, Permission, UserPermission,
+    User, UserRole, Permission, UserPermission, UserOfficePermission,
     DEFAULT_ROLE_PERMISSIONS
 )
 
@@ -62,6 +62,19 @@ class AuthDBManager:
         CREATE INDEX IF NOT EXISTS idx_user_permissions_username ON user_permissions(username);
         CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
         CREATE INDEX IF NOT EXISTS idx_users_active ON users(is_active);
+        """,
+        # Таблица прав доступа к офисам
+        """
+        CREATE TABLE IF NOT EXISTS user_office_permissions (
+            id SERIAL PRIMARY KEY,
+            username VARCHAR(100) NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+            office_address TEXT NOT NULL,
+            UNIQUE(username, office_address)
+        )
+        """,
+        """
+        CREATE INDEX IF NOT EXISTS idx_uop_username ON user_office_permissions(username);
+        CREATE INDEX IF NOT EXISTS idx_uop_office ON user_office_permissions(office_address);
         """,
     ]
 
@@ -497,6 +510,110 @@ class AuthDBManager:
             return False
         self._assign_default_permissions(username, user.role)
         return True
+
+    # ─── Управление правами на офисы ─────────────────────────────
+
+    def get_user_offices(self, username: str) -> List[str]:
+        """Получение списка офисов, доступных пользователю для просмотра"""
+        self.db.cursor.execute(
+            "SELECT office_address FROM user_office_permissions "
+            "WHERE username = %s ORDER BY office_address",
+            (username,)
+        )
+        rows = self.db.cursor.fetchall()
+        return [row['office_address'] for row in rows]
+
+    def set_user_offices(self, username: str, offices: List[str]) -> bool:
+        """Установка списка офисов для пользователя (заменяет текущий список).
+        
+        Args:
+            username: имя пользователя
+            offices: список адресов офисов, к которым предоставляется доступ
+        
+        Returns:
+            True в случае успеха
+        """
+        try:
+            # Удаляем старые записи
+            self.db.cursor.execute(
+                "DELETE FROM user_office_permissions WHERE username = %s",
+                (username,)
+            )
+            # Вставляем новые
+            for office in offices:
+                office = office.strip()
+                if office:
+                    self.db.cursor.execute(
+                        "INSERT INTO user_office_permissions (username, office_address) "
+                        "VALUES (%s, %s) ON CONFLICT (username, office_address) DO NOTHING",
+                        (username, office)
+                    )
+            self.db.connection.commit()
+            logger.info(f"✓ Установлены права на офисы для {username}: {len(offices)} офисов")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Ошибка установки прав на офисы для {username}: {e}")
+            self.db.connection.rollback()
+            return False
+
+    def add_user_office(self, username: str, office_address: str) -> bool:
+        """Добавление одного офиса в список доступных пользователю"""
+        try:
+            self.db.cursor.execute(
+                "INSERT INTO user_office_permissions (username, office_address) "
+                "VALUES (%s, %s) ON CONFLICT (username, office_address) DO NOTHING",
+                (username, office_address)
+            )
+            self.db.connection.commit()
+            logger.info(f"✓ Добавлен офис '{office_address}' для {username}")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Ошибка добавления офиса '{office_address}' для {username}: {e}")
+            self.db.connection.rollback()
+            return False
+
+    def remove_user_office(self, username: str, office_address: str) -> bool:
+        """Удаление офиса из списка доступных пользователю"""
+        try:
+            self.db.cursor.execute(
+                "DELETE FROM user_office_permissions "
+                "WHERE username = %s AND office_address = %s",
+                (username, office_address)
+            )
+            self.db.connection.commit()
+            logger.info(f"✓ Удалён офис '{office_address}' для {username}")
+            return True
+        except Exception as e:
+            logger.error(f"✗ Ошибка удаления офиса '{office_address}' для {username}: {e}")
+            self.db.connection.rollback()
+            return False
+
+    def get_all_offices_from_tickets(self) -> List[str]:
+        """Получение списка всех уникальных офисов из таблицы заявок"""
+        self.db.cursor.execute(
+            "SELECT DISTINCT office FROM tickets "
+            "WHERE office IS NOT NULL AND office != '' "
+            "ORDER BY office"
+        )
+        rows = self.db.cursor.fetchall()
+        return [row['office'] for row in rows]
+
+    def get_offices_for_user(self, username: str) -> Dict:
+        """Получение информации о правах на офисы для пользователя.
+        
+        Returns:
+            Dict с полями:
+                - username: str
+                - offices: List[str] — список доступных офисов
+                - all_offices: List[str] — полный справочник офисов из заявок
+        """
+        user_offices = self.get_user_offices(username)
+        all_offices = self.get_all_offices_from_tickets()
+        return {
+            "username": username,
+            "offices": user_offices,
+            "all_offices": all_offices,
+        }
 
     # ─── Проверка прав ───────────────────────────────────────────
 

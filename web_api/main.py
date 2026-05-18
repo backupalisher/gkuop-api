@@ -47,7 +47,7 @@ from services.image_compressor import (
 from auth.middleware import AuthMiddleware, require_permission, get_current_user
 from auth.db_manager import AuthDBManager
 from auth.router import router as auth_router
-from auth.models import Permission
+from auth.models import Permission, UserRole
 
 # Импорт системы мониторинга аварийных завершений
 from utils.helpers import abbreviate_office
@@ -276,6 +276,7 @@ async def track_request_middleware(request: Request, call_next):
 
 @app.get("/api/tickets")
 async def api_get_tickets(
+    request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     status: str = Query(None),
@@ -382,6 +383,20 @@ async def api_get_tickets(
                 "WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE)"
             )
 
+        # ─── Фильтрация по правам доступа к офисам ───────────────
+        # Администраторы видят все заявки, операторы — только по своим офисам
+        current_user = get_current_user(request)
+        if current_user and current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username)
+            if user_offices:
+                # Создаём плейсхолдеры для списка офисов
+                placeholders = ", ".join(["%s"] * len(user_offices))
+                where_clauses.append(f"t.office IN ({placeholders})")
+                params.extend(user_offices)
+            else:
+                # Если у пользователя нет назначенных офисов — не показываем ничего
+                where_clauses.append("1 = 0")
+
         where_sql = ""
         if where_clauses:
             where_sql = "WHERE " + " AND ".join(where_clauses)
@@ -452,7 +467,7 @@ async def api_get_tickets(
 
 
 @app.get("/api/tickets/{ticket_number}")
-async def api_get_ticket(ticket_number: str):
+async def api_get_ticket(ticket_number: str, request: Request = None):
     """Получить детали заявки, историю и изображения"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -461,6 +476,17 @@ async def api_get_ticket(ticket_number: str):
         ticket = db.get_ticket(ticket_number)
         if not ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+
+        # ─── Проверка прав доступа к офису заявки ───────────────
+        current_user = get_current_user(request) if request else None
+        if current_user and current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username)
+            ticket_office = ticket.get('office', '')
+            if ticket_office and ticket_office not in user_offices:
+                return JSONResponse(
+                    {"error": "Недостаточно прав для просмотра данной заявки"},
+                    status_code=403
+                )
 
         history = db.get_ticket_history(ticket_number)
         # Фильтруем уже сохранённые changed_fields — удаляем поля, исключённые из отображения
@@ -777,12 +803,28 @@ async def api_check_task(ticket_number: str):
 
 
 @app.get("/api/tasks")
-async def api_get_tasks():
+async def api_get_tasks(request: Request):
     """Получить список номеров заявок в задачах"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
     try:
-        task_numbers = db.get_task_numbers()
+        # ─── Фильтрация по правам доступа к офисам ───────────────
+        current_user = get_current_user(request)
+        if current_user and current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username)
+            if user_offices:
+                # Получаем офисы всех задач одним запросом
+                task_offices = db.get_task_offices()
+                # Оставляем только задачи, чей офис есть в разрешённых
+                task_numbers = [
+                    tn for tn, office in task_offices.items()
+                    if office in user_offices
+                ]
+            else:
+                task_numbers = []
+        else:
+            task_numbers = db.get_task_numbers()
+
         return {"tasks": task_numbers, "count": len(task_numbers)}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -790,6 +832,7 @@ async def api_get_tasks():
 
 @app.get("/api/tasks/tickets")
 async def api_get_task_tickets(
+    request: Request,
     page: int = Query(1, ge=1),
     per_page: int = Query(50, ge=1, le=200),
     sort_by: str = Query("last_updated_date"),
@@ -808,13 +851,32 @@ async def api_get_task_tickets(
         if sort_order not in ("asc", "desc"):
             sort_order = "desc"
 
+        where_clauses = [
+            "(t.is_archived IS NULL OR t.is_archived = FALSE)"
+        ]
+        params = []
+
+        # ─── Фильтрация по правам доступа к офисам ───────────────
+        current_user = get_current_user(request)
+        if current_user and current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username)
+            if user_offices:
+                placeholders = ", ".join(["%s"] * len(user_offices))
+                where_clauses.append(f"t.office IN ({placeholders})")
+                params.extend(user_offices)
+            else:
+                where_clauses.append("1 = 0")
+
+        where_sql = " AND ".join(where_clauses)
+
         # Сначала получаем общее количество
-        db.cursor.execute("""
+        count_query = f"""
             SELECT COUNT(*) as total
             FROM tickets t
             INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
-            WHERE (t.is_archived IS NULL OR t.is_archived = FALSE)
-        """)
+            WHERE {where_sql}
+        """
+        db.cursor.execute(count_query, params)
         total = db.cursor.fetchone()["total"]
 
         offset = (page - 1) * per_page
@@ -827,10 +889,10 @@ async def api_get_task_tickets(
                    ) THEN TRUE ELSE FALSE END AS has_files
             FROM tickets t
             INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
-            WHERE (t.is_archived IS NULL OR t.is_archived = FALSE)
-            ORDER BY t.{} {} LIMIT %s OFFSET %s
-        """).format(sort_column, SQL(sort_order))
-        db.cursor.execute(query, [per_page, offset])
+        """) + SQL(f"WHERE {where_sql}") + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
+            sort_column, SQL(sort_order)
+        )
+        db.cursor.execute(query, params + [per_page, offset])
         rows = db.cursor.fetchall()
 
         # Применяем сокращение адресов офисов для отображения в списке
