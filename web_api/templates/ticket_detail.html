@@ -416,6 +416,7 @@
 
                 const t = data.ticket;
                 const history = data.history || [];
+                const commentCount = data.comment_count || 0;
 
                 // Собираем актуальное состояние заявки из тикета + всех diff-записей истории
                 const s = { ...t, _is_task: taskData.is_task === true };
@@ -455,7 +456,7 @@
                     <div class="info-grid">
                         <div class="info-item">
                             <div class="label">Номер заявки</div>
-                            <div class="value">#${t.ticket_number}</div>
+                            <div class="value">#${t.ticket_number}${commentCount > 0 ? '<span class="comment-icon-detail" onclick="document.getElementById(\'user-comments-section\').scrollIntoView({behavior:\'smooth\'});return false;" title="Перейти к комментариям (' + commentCount + ')">💬 <span class="comment-count-badge">' + commentCount + '</span></span>' : ''}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Статус</div>
@@ -604,7 +605,7 @@
 
                 // Комментарии пользователей
                 const userComments = data.user_comments || [];
-                html += `<div class="card">
+                html += `<div class="card" id="user-comments-section">
                     <h2>Комментарии (${userComments.length})</h2>`;
 
                 if (userComments.length === 0) {

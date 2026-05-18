@@ -430,7 +430,11 @@ async def api_get_tickets(
                    CASE WHEN EXISTS (
                        SELECT 1 FROM ticket_images ti
                        WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE
-                   ) THEN TRUE ELSE FALSE END AS has_files
+                   ) THEN TRUE ELSE FALSE END AS has_files,
+                   CASE WHEN EXISTS (
+                       SELECT 1 FROM user_comments uc
+                       WHERE uc.ticket_number = t.ticket_number
+                   ) THEN TRUE ELSE FALSE END AS has_comments
             FROM tickets t
         """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
@@ -527,8 +531,15 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
 
         # Получаем пользовательские комментарии
         user_comments = db.get_user_comments(ticket_number)
+        comment_count = len(user_comments)
 
-        return {"ticket": ticket, "history": history, "images": images, "user_comments": user_comments}
+        return {
+            "ticket": ticket,
+            "history": history,
+            "images": images,
+            "user_comments": user_comments,
+            "comment_count": comment_count
+        }
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 

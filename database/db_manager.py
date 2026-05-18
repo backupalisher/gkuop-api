@@ -955,6 +955,44 @@ class DatabaseManager:
             logger.error(f"Ошибка получения комментариев пользователей: {e}")
             return []
 
+    def get_user_comments_count(self, ticket_number: str) -> int:
+        """Получение количества комментариев пользователей для заявки"""
+        try:
+            self.cursor.execute(
+                "SELECT COUNT(*) as cnt FROM user_comments WHERE ticket_number = %s",
+                (ticket_number,)
+            )
+            result = self.cursor.fetchone()
+            return result['cnt'] if result else 0
+        except Exception as e:
+            logger.error(f"Ошибка получения количества комментариев: {e}")
+            return 0
+
+    def get_tickets_has_comments(self, ticket_numbers: List[str]) -> Dict[str, bool]:
+        """
+        Получение словаря {ticket_number: has_comments} для списка заявок.
+        Возвращает True, если у заявки есть хотя бы один комментарий.
+        """
+        if not ticket_numbers:
+            return {}
+        try:
+            placeholders = ", ".join(["%s"] * len(ticket_numbers))
+            self.cursor.execute(
+                f"""SELECT ticket_number, COUNT(*) as cnt
+                    FROM user_comments
+                    WHERE ticket_number IN ({placeholders})
+                    GROUP BY ticket_number""",
+                ticket_numbers
+            )
+            rows = self.cursor.fetchall()
+            result = {tn: False for tn in ticket_numbers}
+            for row in rows:
+                result[row['ticket_number']] = row['cnt'] > 0
+            return result
+        except Exception as e:
+            logger.error(f"Ошибка получения наличия комментариев: {e}")
+            return {tn: False for tn in ticket_numbers}
+
     def close(self):
         """Закрытие соединения"""
         if self.cursor:
