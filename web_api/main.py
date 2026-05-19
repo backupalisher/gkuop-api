@@ -325,6 +325,7 @@ async def api_get_tickets(
     sort_order: str = Query("desc"),
     archived: str = Query("0"),
     has_images: str = Query(None),
+    month: str = Query(None),
 ):
     """Получить список заявок с пагинацией и фильтрацией.
     archived=0 — только активные (по умолчанию),
@@ -333,6 +334,7 @@ async def api_get_tickets(
     has_images=true — только с изображениями,
     has_images=false — только без изображений,
     has_images=null (по умолчанию) — все.
+    month=MM-YYYY — фильтр по месяцу выполнения (статус "Выполнено").
     """
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -422,6 +424,36 @@ async def api_get_tickets(
                 "NOT EXISTS (SELECT 1 FROM ticket_images ti "
                 "WHERE ti.ticket_number = t.ticket_number AND ti.is_deleted = FALSE)"
             )
+
+        # ─── Фильтрация по месяцу выполнения ──────────────────────
+        # Формат month: MM-YYYY (например, "01-2025" или "05-2026")
+        if month:
+            import re as re_month
+            month_match = re_month.match(r'^(\d{2})-(\d{4})$', month)
+            if month_match:
+                month_num = month_match.group(1)
+                year_num = month_match.group(2)
+                # Показываем только заявки со статусом "Выполнено",
+                # у которых completed_at попадает в указанный месяц/год
+                where_clauses.append("t.status = 'Выполнено'")
+                where_clauses.append(
+                    "EXTRACT(MONTH FROM COALESCE("
+                    "(SELECT th.received_date FROM ticket_history th "
+                    "WHERE th.ticket_number = t.ticket_number "
+                    "AND (th.changed_fields::jsonb @> '{\"status\": \"Выполнено\"}'::jsonb OR th.status = 'Выполнено') "
+                    "ORDER BY th.received_date DESC LIMIT 1), "
+                    "t.last_updated_date)) = %s"
+                )
+                params.append(int(month_num))
+                where_clauses.append(
+                    "EXTRACT(YEAR FROM COALESCE("
+                    "(SELECT th.received_date FROM ticket_history th "
+                    "WHERE th.ticket_number = t.ticket_number "
+                    "AND (th.changed_fields::jsonb @> '{\"status\": \"Выполнено\"}'::jsonb OR th.status = 'Выполнено') "
+                    "ORDER BY th.received_date DESC LIMIT 1), "
+                    "t.last_updated_date)) = %s"
+                )
+                params.append(int(year_num))
 
         # ─── Фильтрация по правам доступа к офисам ───────────────
         # Администраторы видят все заявки, операторы — только по своим офисам

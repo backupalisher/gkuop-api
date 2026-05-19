@@ -77,7 +77,17 @@
             </div>
         </div>
 
-        <div id="searchResultsInfo" class="search-results-info" style="display:none"></div>
+        <div class="filter-bar" id="filterBar" data-permission-any="view_tickets">
+            <div id="searchResultsInfo" class="search-results-info" style="display:none"></div>
+            <div class="month-filter-controls" id="monthFilterControls" data-permission-any="view_tickets" style="display:none">
+                <button class="btn btn-icon month-filter-btn" id="monthFilterBtn" title="Фильтр по месяцу выполнения">🗓️</button>
+                <div class="month-dropdown" id="monthDropdown" style="display:none">
+                    <div class="month-dropdown-header">Выберите месяц</div>
+                    <div class="month-dropdown-list" id="monthDropdownList"></div>
+                </div>
+                <button class="btn btn-icon month-reset-btn" id="monthResetBtn" title="Сбросить фильтр по месяцу" style="display:none">🧹</button>
+            </div>
+        </div>
 
         <div class="table-wrap">
             <table>
@@ -365,6 +375,132 @@
         let currentTab = 'active';
         let taskNumbers = [];  // Номера заявок, находящихся в задачах
 
+        // ─── Фильтрация по месяцу выполнения ─────────────────
+        let currentMonth = null;  // Текущий выбранный месяц в формате "MM-YYYY" или null
+        const MONTH_NAMES = [
+            'Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь',
+            'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'
+        ];
+
+        function initMonthFilter() {
+            const filterBtn = document.getElementById('monthFilterBtn');
+            const dropdown = document.getElementById('monthDropdown');
+            const resetBtn = document.getElementById('monthResetBtn');
+            const controls = document.getElementById('monthFilterControls');
+            if (!filterBtn || !dropdown || !resetBtn || !controls) return;
+
+            // Показываем контролы только если есть права
+            controls.style.display = '';
+
+            // Заполняем список месяцев
+            const list = document.getElementById('monthDropdownList');
+            if (list && list.children.length === 0) {
+                const now = new Date();
+                const currentYear = now.getFullYear();
+                // Показываем последние 12 месяцев (текущий + 11 предыдущих)
+                for (let i = 0; i < 12; i++) {
+                    const d = new Date(currentYear, now.getMonth() - i, 1);
+                    const monthNum = String(d.getMonth() + 1).padStart(2, '0');
+                    const yearNum = d.getFullYear();
+                    const value = `${monthNum}-${yearNum}`;
+                    const label = `${MONTH_NAMES[d.getMonth()]} ${yearNum}`;
+
+                    const option = document.createElement('button');
+                    option.className = 'month-option';
+                    option.dataset.value = value;
+                    option.textContent = label;
+                    option.onclick = function(e) {
+                        e.stopPropagation();
+                        applyMonthFilter(this.dataset.value);
+                    };
+                    list.appendChild(option);
+                }
+            }
+
+            // Открытие/закрытие дропдауна по клику на кнопку
+            filterBtn.onclick = function(e) {
+                e.stopPropagation();
+                const isOpen = dropdown.style.display === 'block';
+                closeAllDropdowns();
+                if (!isOpen) {
+                    dropdown.style.display = 'block';
+                    filterBtn.classList.add('active');
+                }
+            };
+
+            // Сброс фильтра
+            resetBtn.onclick = function(e) {
+                e.stopPropagation();
+                resetMonthFilter();
+            };
+
+            // Закрытие дропдауна при клике вне его
+            document.addEventListener('click', function(e) {
+                if (!controls.contains(e.target)) {
+                    dropdown.style.display = 'none';
+                    if (!currentMonth) filterBtn.classList.remove('active');
+                }
+            });
+        }
+
+        function closeAllDropdowns() {
+            document.querySelectorAll('.month-dropdown').forEach(d => d.style.display = 'none');
+            document.querySelectorAll('.month-filter-btn').forEach(b => {
+                if (!currentMonth) b.classList.remove('active');
+            });
+        }
+
+        function applyMonthFilter(value) {
+            currentMonth = value;
+            const filterBtn = document.getElementById('monthFilterBtn');
+            const dropdown = document.getElementById('monthDropdown');
+            const resetBtn = document.getElementById('monthResetBtn');
+            const list = document.getElementById('monthDropdownList');
+
+            // Обновляем активный класс в списке
+            if (list) {
+                list.querySelectorAll('.month-option').forEach(opt => {
+                    opt.classList.toggle('active', opt.dataset.value === value);
+                });
+            }
+
+            // Обновляем состояние кнопок
+            if (filterBtn) {
+                filterBtn.classList.add('active');
+                // Показываем название выбранного месяца в tooltip
+                const selectedLabel = list ? list.querySelector('.month-option.active')?.textContent : null;
+                filterBtn.title = selectedLabel ? `Фильтр: ${selectedLabel}` : 'Фильтр по месяцу выполнения';
+            }
+            if (dropdown) dropdown.style.display = 'none';
+            if (resetBtn) resetBtn.style.display = '';
+
+            // Перезагружаем список заявок
+            currentPage = 1;
+            loadTickets();
+        }
+
+        function resetMonthFilter() {
+            currentMonth = null;
+            const filterBtn = document.getElementById('monthFilterBtn');
+            const dropdown = document.getElementById('monthDropdown');
+            const resetBtn = document.getElementById('monthResetBtn');
+            const list = document.getElementById('monthDropdownList');
+
+            if (filterBtn) {
+                filterBtn.classList.remove('active');
+                filterBtn.title = 'Фильтр по месяцу выполнения';
+            }
+            if (dropdown) dropdown.style.display = 'none';
+            if (resetBtn) resetBtn.style.display = 'none';
+            if (list) {
+                list.querySelectorAll('.month-option').forEach(opt => opt.classList.remove('active'));
+            }
+
+            // Перезагружаем список заявок
+            currentPage = 1;
+            loadTickets();
+        }
+
         // ─── Toast-уведомления ──────────────────────────────
         function showToast(message, type = 'info', duration = 4000) {
             const container = document.getElementById('toastContainer');
@@ -553,6 +689,7 @@
                         archived: currentTab === 'archived' ? '1' : '0',
                     });
                     if (search) params.set('search', search);
+                    if (currentMonth) params.set('month', currentMonth);
                     data = await fetchJSON('/api/tickets?' + params.toString());
                 }
 
@@ -594,6 +731,11 @@
                         const searchVal = document.getElementById('searchInput').value.trim();
                         let label = `Найдено заявок: <strong>${data.total}</strong>`;
                         if (searchVal) label += ` (поиск: «${escapeHtml(searchVal)}»)`;
+                        if (currentMonth) {
+                            const [m, y] = currentMonth.split('-');
+                            const monthName = MONTH_NAMES[parseInt(m, 10) - 1];
+                            label += ` · фильтр: <strong>${monthName} ${y}</strong>`;
+                        }
                         resultsInfo.innerHTML = label;
                         resultsInfo.style.display = 'block';
                     }
@@ -754,6 +896,12 @@
                 if (typeof updateUsersTabVisibility === 'function') updateUsersTabVisibility();
             }, 200);
         }
+
+        // Инициализация фильтра по месяцам
+        setTimeout(() => {
+            initMonthFilter();
+            // PermissionGuard сам обработает data-permission-any атрибуты
+        }, 300);
 
         loadTabCounts();
 

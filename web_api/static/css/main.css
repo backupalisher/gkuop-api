@@ -2515,6 +2515,160 @@ tr {
   color: var(--color-text-secondary);
 }
 
+/* ─── Filter bar (результаты поиска + кнопки фильтрации) ──── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.filter-bar .search-results-info {
+  margin-bottom: 0;
+  flex: 1 1 auto;
+}
+
+/* ─── Контейнер кнопок фильтрации по месяцу ──────────────── */
+.month-filter-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Кнопка фильтра по месяцу */
+.month-filter-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.month-filter-btn:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.month-filter-btn.active {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Кнопка сброса фильтра */
+.month-reset-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.month-reset-btn:hover {
+  background: var(--color-error-bg);
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+/* Выпадающий список месяцев */
+.month-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 180px;
+  max-height: 320px;
+  overflow-y: auto;
+  animation: dropdownFadeIn 0.15s ease;
+}
+
+@keyframes dropdownFadeIn {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.month-dropdown-header {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.month-dropdown-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.month-option {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: var(--font-family);
+}
+
+.month-option:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+}
+
+.month-option.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.month-option:not(:last-child) {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
 /* Индикатор прогресса перестройки БД */
 .rebuild-progress {
   display: flex;
