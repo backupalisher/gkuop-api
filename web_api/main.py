@@ -1043,32 +1043,60 @@ async def api_restore_ticket(ticket_number: str, request: Request):
 @app.post("/api/tickets/{ticket_number}/task")
 @require_permission(Permission.MANAGE_TASKS)
 async def api_add_task(ticket_number: str, request: Request):
-    """Добавить заявку в список задач"""
+    """Добавить заявку в список задач (AJAX-friendly)"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
     try:
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
-            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+            return JSONResponse(
+                {"error": "Заявка не найдена", "is_task": False},
+                status_code=404,
+            )
+        # Проверяем, не добавлена ли уже заявка (дубликат)
+        already_task = db.is_task(ticket_number)
+        if already_task:
+            return JSONResponse(
+                {
+                    "status": "duplicate",
+                    "is_task": True,
+                    "message": "Заявка уже находится в списке задач",
+                },
+                status_code=409,
+            )
         if db.add_task(ticket_number):
-            return {"status": "ok", "message": "Заявка добавлена в задачи"}
-        return JSONResponse({"error": "Не удалось добавить задачу"}, status_code=500)
+            return {
+                "status": "ok",
+                "is_task": True,
+                "message": "Заявка добавлена в задачи",
+            }
+        return JSONResponse(
+            {"error": "Не удалось добавить задачу", "is_task": False},
+            status_code=500,
+        )
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": str(e), "is_task": False}, status_code=500)
 
 
 @app.delete("/api/tickets/{ticket_number}/task")
 @require_permission(Permission.MANAGE_TASKS)
 async def api_remove_task(ticket_number: str, request: Request):
-    """Удалить заявку из списка задач"""
+    """Удалить заявку из списка задач (AJAX-friendly)"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
     try:
         if db.remove_task(ticket_number):
-            return {"status": "ok", "message": "Заявка удалена из задач"}
-        return JSONResponse({"error": "Не удалось удалить задачу"}, status_code=500)
+            return {
+                "status": "ok",
+                "is_task": False,
+                "message": "Заявка удалена из задач",
+            }
+        return JSONResponse(
+            {"error": "Не удалось удалить задачу", "is_task": True},
+            status_code=500,
+        )
     except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse({"error": str(e), "is_task": True}, status_code=500)
 
 
 @app.get("/api/tickets/{ticket_number}/task")

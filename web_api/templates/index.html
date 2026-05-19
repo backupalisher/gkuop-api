@@ -639,22 +639,110 @@
             return taskNumbers.includes(ticketNumber);
         }
 
+        /**
+         * Переключает статус задачи из списка заявок асинхронно,
+         * без полной перезагрузки таблицы. Точечно обновляет кнопку в строке.
+         */
         async function _toggleTaskFromList(ticketNumber, event) {
             event.preventDefault();
             event.stopPropagation();
+
+            const btn = event.currentTarget;
+            if (!btn) return;
+
+            // Определяем текущее состояние
+            const isCurrentlyTask = btn.classList.contains('active');
+
+            // Блокируем кнопку и показываем спиннер
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-btn"></span>';
+            btn.classList.add('loading');
+
+            // Создаём контроллер для таймаута
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s таймаут
+
             try {
-                if (isInTasks(ticketNumber)) {
-                    await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'DELETE' });
-                    showToast('Заявка удалена из задач', 'info');
+                let data;
+                if (isCurrentlyTask) {
+                    data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, {
+                        method: 'DELETE',
+                        signal: controller.signal,
+                    });
                 } else {
-                    await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'POST' });
-                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                    data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, {
+                        method: 'POST',
+                        signal: controller.signal,
+                    });
                 }
-                await loadTaskNumbers();
-                loadTickets();
+
+                clearTimeout(timeoutId);
+
+                if (data.error) {
+                    showToast('Ошибка: ' + data.error, 'error');
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    return;
+                }
+
+                // Обработка дубликата (409 Conflict)
+                if (data.status === 'duplicate') {
+                    showToast(data.message || 'Заявка уже в задачах', 'warning');
+                    btn.classList.add('active');
+                    btn.innerHTML = '🔵';
+                    btn.title = 'Удалить из задач';
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    // Обновляем taskNumbers
+                    if (!taskNumbers.includes(ticketNumber)) {
+                        taskNumbers.push(ticketNumber);
+                    }
+                    loadTabCounts();
+                    return;
+                }
+
+                // Успешное переключение — точечно обновляем кнопку
+                const newIsTask = data.is_task === true;
+
+                if (newIsTask) {
+                    btn.classList.add('active');
+                    btn.innerHTML = '🔵';
+                    btn.title = 'Удалить из задач';
+                    if (!taskNumbers.includes(ticketNumber)) {
+                        taskNumbers.push(ticketNumber);
+                    }
+                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                } else {
+                    btn.classList.remove('active');
+                    btn.innerHTML = '⚪';
+                    btn.title = 'Добавить в задачи';
+                    taskNumbers = taskNumbers.filter(n => n !== ticketNumber);
+                    showToast('Заявка удалена из задач', 'info');
+                }
+
+                btn.disabled = false;
+                btn.classList.remove('loading');
+
+                // Анимация успешного обновления
+                btn.classList.add('btn-flash');
+                setTimeout(() => btn.classList.remove('btn-flash'), 600);
+
+                // Обновляем только счётчики вкладок (не перезагружаем всю таблицу)
                 loadTabCounts();
+
             } catch (e) {
-                showToast('Ошибка: ' + e.message, 'error');
+                clearTimeout(timeoutId);
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('loading');
+
+                if (e.name === 'AbortError') {
+                    showToast('⏱ Превышено время ожидания. Попробуйте снова.', 'error');
+                } else {
+                    showToast('Ошибка: ' + e.message, 'error');
+                }
             }
         }
         const toggleTaskFromList = PermissionGuard.protectFunction(_toggleTaskFromList, 'manage_tasks');

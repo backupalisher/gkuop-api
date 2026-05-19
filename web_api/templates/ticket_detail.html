@@ -373,21 +373,102 @@
         }
         const uncompleteTicket = PermissionGuard.protectFunction(_uncompleteTicket, 'admin_access');
 
+        /**
+         * Переключает статус задачи (добавить/удалить) асинхронно,
+         * без полной перезагрузки страницы. Точечно обновляет кнопку.
+         */
         async function _toggleTask() {
+            const btn = document.querySelector('.btn-task');
+            if (!btn) return;
+
+            // Определяем текущее состояние по кнопке (не по серверу — экономим запрос)
+            const isCurrentlyTask = btn.classList.contains('active');
+
+            // Блокируем кнопку и показываем спиннер
+            const originalHtml = btn.innerHTML;
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner-btn"></span>';
+            btn.classList.add('loading');
+
+            // Создаём контроллер для таймаута
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 15000); // 15s таймаут
+
             try {
-                const checkData = await fetchJSON(`/api/tickets/${ticketNumber}/task`);
-                if (checkData.is_task) {
-                    const data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'DELETE' });
-                    if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
-                    showToast('Заявка удалена из задач', 'info');
+                let data;
+                if (isCurrentlyTask) {
+                    data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, {
+                        method: 'DELETE',
+                        signal: controller.signal,
+                    });
                 } else {
-                    const data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, { method: 'POST' });
-                    if (data.error) { showToast('Ошибка: ' + data.error, 'error'); return; }
-                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                    data = await fetchJSON(`/api/tickets/${ticketNumber}/task`, {
+                        method: 'POST',
+                        signal: controller.signal,
+                    });
                 }
+
+                clearTimeout(timeoutId);
+
+                if (data.error) {
+                    showToast('Ошибка: ' + data.error, 'error');
+                    // Восстанавливаем исходное состояние кнопки
+                    btn.innerHTML = originalHtml;
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    return;
+                }
+
+                // Обработка дубликата (409 Conflict)
+                if (data.status === 'duplicate') {
+                    showToast(data.message || 'Заявка уже в задачах', 'warning');
+                    // Синхронизируем состояние: помечаем как задачу
+                    if (s) s._is_task = true;
+                    btn.classList.add('active');
+                    btn.innerHTML = '✅ Задача';
+                    btn.disabled = false;
+                    btn.classList.remove('loading');
+                    markListNeedsRefresh();
+                    return;
+                }
+
+                // Успешное переключение — точечно обновляем кнопку
+                const newIsTask = data.is_task === true;
+                if (s) s._is_task = newIsTask;
+
+                if (newIsTask) {
+                    btn.classList.add('active');
+                    btn.innerHTML = '✅ Задача';
+                    showToast('🔵 Заявка добавлена в задачи', 'success');
+                } else {
+                    btn.classList.remove('active');
+                    btn.innerHTML = '🔵 Задача';
+                    showToast('Заявка удалена из задач', 'info');
+                }
+
+                btn.disabled = false;
+                btn.classList.remove('loading');
+
+                // Анимация успешного обновления
+                btn.classList.add('btn-flash');
+                setTimeout(() => btn.classList.remove('btn-flash'), 600);
+
+                // Отмечаем, что список на главной нужно обновить
                 markListNeedsRefresh();
-                loadTicket();
-            } catch (e) { showToast('Ошибка: ' + e.message, 'error'); }
+
+            } catch (e) {
+                clearTimeout(timeoutId);
+                // Восстанавливаем кнопку
+                btn.innerHTML = originalHtml;
+                btn.disabled = false;
+                btn.classList.remove('loading');
+
+                if (e.name === 'AbortError') {
+                    showToast('⏱ Превышено время ожидания. Попробуйте снова.', 'error');
+                } else {
+                    showToast('Ошибка: ' + e.message, 'error');
+                }
+            }
         }
         const toggleTask = PermissionGuard.protectFunction(_toggleTask, 'manage_tasks');
 

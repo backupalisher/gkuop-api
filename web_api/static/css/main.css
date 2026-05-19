@@ -576,6 +576,33 @@ a:hover { text-decoration: underline; }
 .btn-task:hover { background: #6d28d9; border-color: #6d28d9; box-shadow: 0 4px 12px rgba(124,58,237,0.4); }
 .btn-task.active { background: #059669; border-color: #059669; }
 .btn-task.active:hover { background: #047857; border-color: #047857; box-shadow: 0 4px 12px rgba(5,150,105,0.4); }
+.btn-task:disabled,
+.btn-task.loading { opacity: 0.7; cursor: not-allowed; transform: none !important; }
+
+/* Спиннер на кнопке */
+.spinner-btn {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 2px solid rgba(255,255,255,0.3);
+  border-top-color: #fff;
+  border-radius: 50%;
+  animation: spin-btn 0.6s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin-btn {
+  to { transform: rotate(360deg); }
+}
+
+/* Вспышка при успешном обновлении */
+.btn-flash {
+  animation: btnFlash 0.6s ease;
+}
+@keyframes btnFlash {
+  0% { box-shadow: 0 0 0 0 rgba(255,255,255,0.5); }
+  50% { box-shadow: 0 0 20px 4px rgba(255,255,255,0.3); }
+  100% { box-shadow: 0 0 0 0 rgba(255,255,255,0); }
+}
 
 /* Кнопка "Назад к списку" — единый стиль с .btn-action */
 .btn-back {
@@ -1445,6 +1472,23 @@ tr {
 }
 .task-toggle-btn.active {
   filter: none;
+}
+.task-toggle-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+  transform: none !important;
+}
+.task-toggle-btn.loading {
+  cursor: wait;
+  opacity: 0.7;
+  transform: none !important;
+}
+.task-toggle-btn .spinner-btn {
+  width: 12px;
+  height: 12px;
+  border-width: 2px;
+  display: block;
+  margin: 0 auto;
 }
 
 /* ─── Изображения и документы ──────────────────────────── */
