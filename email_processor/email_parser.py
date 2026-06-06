@@ -220,10 +220,12 @@ class EmailParser:
                 if equip_value and equip_value not in ('Принтер', 'Принтер/МФУ', 'МФУ'):
                     result['printer_model'] = equip_value
 
-        # Поиск строки с "СОГЛАСОВАНО" в теле письма
-        soglasovano_match = re.search(r'^.*?СОГЛАСОВАНО.*?$', body, re.MULTILINE | re.IGNORECASE)
-        if soglasovano_match:
-            result['soglasovano_line'] = soglasovano_match.group(0).strip()
+        # Поиск ВСЕХ строк с "СОГЛАСОВАНО" в теле письма
+        # Используем re.findall, чтобы не потерять ни одну позицию (была ошибка: re.search находил только первую)
+        soglasovano_matches = re.findall(r'^.*?СОГЛАСОВАНО.*?$', body, re.MULTILINE | re.IGNORECASE)
+        if soglasovano_matches:
+            # Объединяем все найденные строки через перенос строки
+            result['soglasovano_line'] = '\n'.join(m.strip() for m in soglasovano_matches)
 
         # Парсинг ФИО отдельно
         full_name_pattern = r'Фамилия:\s*(.+?)\n\s*Имя:\s*(.+?)\n\s*Отчество:\s*(.+?)(?:\n|$)'

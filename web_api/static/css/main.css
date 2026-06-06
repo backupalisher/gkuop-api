@@ -2641,6 +2641,182 @@ tr {
   color: var(--color-error);
 }
 
+/* ─── Контейнер группы фильтров ───────────────────────────── */
+.filter-controls-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+}
+
+/* ─── Контейнер кнопок фильтрации по адресу ──────────────── */
+.office-filter-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* Кнопка фильтра по адресу */
+.office-filter-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.office-filter-btn:hover {
+  background: var(--color-surface-hover);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+.office-filter-btn.active {
+  background: var(--color-primary-bg);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Кнопка сброса фильтра по адресу */
+.office-reset-btn {
+  width: 32px;
+  height: 32px;
+  min-width: 32px;
+  min-height: 32px;
+  padding: 0;
+  font-size: 22px;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  border: 1px solid var(--color-border);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all var(--transition-base);
+}
+
+.office-reset-btn:hover {
+  background: var(--color-error-bg);
+  border-color: var(--color-error);
+  color: var(--color-error);
+}
+
+/* Выпадающий список адресов */
+.office-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  animation: dropdownFadeIn 0.15s ease;
+}
+
+.office-dropdown-header {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.office-dropdown-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.office-option {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: var(--font-family);
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.office-option:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+}
+
+.office-option.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.office-option:not(:last-child) {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.office-option-abbr {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  min-width: 32px;
+}
+
+.office-option-full {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.office-option.active .office-option-abbr {
+  color: var(--color-primary);
+}
+
+.office-option.active .office-option-full {
+  color: var(--color-primary);
+  opacity: 0.8;
+}
+
+/* Состояние загрузки списка адресов */
+.office-option-loading,
+.office-option-error {
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+  cursor: default;
+}
+
+.office-option-error {
+  color: var(--color-error);
+}
+
 /* Выпадающий список месяцев */
 .month-dropdown {
   position: absolute;
@@ -3259,3 +3435,21 @@ tr {
     bottom: 52px;
   }
 }
+
+
+| Элемент         | Цвет                   |
+| --------------- | ---------------------- |
+| Background      | #F5F7FA                |
+| Card Background | rgba(255,255,255,0.75) |
+| Sidebar         | #FFFFFF                |
+| Primary         | #2563EB                |
+| Success         | #22C55E                |
+| Warning         | #F59E0B                |
+| Danger          | #EF4444                |
+| Text Primary    | #111827                |
+| Text Secondary  | #6B7280                |
+| Border          | rgba(255,255,255,0.2)  |
+
+:root {
+  /* Цветовая палитра */
+  --color-primary: #6B7280

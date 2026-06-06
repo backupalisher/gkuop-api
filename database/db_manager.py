@@ -636,6 +636,31 @@ class DatabaseManager:
         row = self.cursor.fetchone()
         return row['cnt'] if row else 0
 
+    def get_offices(self) -> List[Dict[str, Any]]:
+        """Получить список уникальных адресов офисов из заявок.
+        
+        Returns:
+            Список словарей с ключами 'office' (полный адрес) и 'abbreviated' (сокращение).
+            Отсортирован по сокращённому названию.
+        """
+        self.cursor.execute("""
+            SELECT DISTINCT t.office
+            FROM tickets t
+            WHERE t.office IS NOT NULL AND t.office != ''
+            ORDER BY t.office
+        """)
+        rows = self.cursor.fetchall()
+        # Импортируем функцию сокращения адресов
+        from utils.helpers import abbreviate_office
+        result = []
+        for r in rows:
+            office = r['office']
+            result.append({
+                'office': office,
+                'abbreviated': abbreviate_office(office),
+            })
+        return result
+
     @_retry_on_db_error(max_attempts=3, base_delay=0.5)
     def archive_old_tickets(self, before_date: datetime) -> Dict[str, Any]:
         """Массовая архивация заявок, созданных до указанной даты (включительно)."""

@@ -326,6 +326,7 @@ async def api_get_tickets(
     archived: str = Query("0"),
     has_images: str = Query(None),
     month: str = Query(None),
+    office: str = Query(None),
 ):
     """Получить список заявок с пагинацией и фильтрацией.
     archived=0 — только активные (по умолчанию),
@@ -455,6 +456,11 @@ async def api_get_tickets(
                 )
                 params.append(int(year_num))
 
+        # ─── Фильтрация по адресу офиса ─────────────────────────
+        if office:
+            where_clauses.append("t.office = %s")
+            params.append(office)
+
         # ─── Фильтрация по правам доступа к офисам ───────────────
         # Администраторы видят все заявки, операторы — только по своим офисам
         current_user = get_current_user(request)
@@ -554,6 +560,18 @@ async def api_get_tickets(
             "per_page": per_page,
             "total_pages": max(1, (total + per_page - 1) // per_page),
         }
+    except Exception as e:
+        return JSONResponse({"error": str(e)}, status_code=500)
+
+
+@app.get("/api/offices")
+async def api_get_offices(request: Request):
+    """Получить список уникальных адресов офисов из заявок."""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        offices = db.get_offices()
+        return {"offices": offices}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
