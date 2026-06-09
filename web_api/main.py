@@ -1237,6 +1237,8 @@ async def api_get_task_tickets(
     per_page: int = Query(50, ge=1, le=200),
     sort_by: str = Query("last_updated_date"),
     sort_order: str = Query("desc"),
+    office: Optional[str] = Query(None),
+    month: Optional[str] = Query(None),
 ):
     """Получить заявки из списка задач с пагинацией (только активные, не архивированные)"""
     if not db:
@@ -1266,6 +1268,39 @@ async def api_get_task_tickets(
                 params.extend(user_offices)
             else:
                 where_clauses.append("1 = 0")
+
+        # ─── Фильтрация по адресу офиса ──────────────────────────
+        if office:
+            where_clauses.append("t.office = %s")
+            params.append(office)
+
+        # ─── Фильтрация по месяцу выполнения ─────────────────────
+        # Формат month: MM-YYYY (например, "01-2025" или "05-2026")
+        if month:
+            import re as re_month
+            month_match = re_month.match(r'^(\d{2})-(\d{4})$', month)
+            if month_match:
+                month_num = month_match.group(1)
+                year_num = month_match.group(2)
+                where_clauses.append("t.status = 'Выполнено'")
+                where_clauses.append(
+                    "EXTRACT(MONTH FROM COALESCE("
+                    "(SELECT th.received_date FROM ticket_history th "
+                    "WHERE th.ticket_number = t.ticket_number "
+                    "AND (th.changed_fields::jsonb @> '{\"status\": \"Выполнено\"}'::jsonb OR th.status = 'Выполнено') "
+                    "ORDER BY th.received_date DESC LIMIT 1), "
+                    "t.last_updated_date)) = %s"
+                )
+                params.append(int(month_num))
+                where_clauses.append(
+                    "EXTRACT(YEAR FROM COALESCE("
+                    "(SELECT th.received_date FROM ticket_history th "
+                    "WHERE th.ticket_number = t.ticket_number "
+                    "AND (th.changed_fields::jsonb @> '{\"status\": \"Выполнено\"}'::jsonb OR th.status = 'Выполнено') "
+                    "ORDER BY th.received_date DESC LIMIT 1), "
+                    "t.last_updated_date)) = %s"
+                )
+                params.append(int(year_num))
 
         where_sql = " AND ".join(where_clauses)
 

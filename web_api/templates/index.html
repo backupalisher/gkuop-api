@@ -944,6 +944,8 @@
                         sort_by: currentSort,
                         sort_order: currentOrder,
                     });
+                    if (currentMonth) params.set('month', currentMonth);
+                    if (currentOffice) params.set('office', currentOffice);
                     data = await fetchJSON('/api/tasks/tickets?' + params.toString());
                 } else {
                     // Для вкладок "Активные" и "Архив"
