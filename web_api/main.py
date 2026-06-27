@@ -10,9 +10,11 @@ import logging
 import asyncio
 import threading
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, date
+from decimal import Decimal
+from uuid import UUID
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Any
 from urllib.parse import quote
 
 logger = logging.getLogger(__name__)
@@ -247,12 +249,62 @@ async def lifespan(app: FastAPI):
         db.close()
 
 
+class CustomJSONEncoder(json.JSONEncoder):
+    """Кастомный JSONEncoder для сериализации datetime и других нестандартных типов."""
+    def default(self, obj):
+        if isinstance(obj, datetime):
+            return obj.isoformat()
+        if isinstance(obj, date):
+            return obj.isoformat()
+        if isinstance(obj, Decimal):
+            return float(obj)
+        if isinstance(obj, UUID):
+            return str(obj)
+        if isinstance(obj, bytes):
+            return obj.decode('utf-8', errors='replace')
+        return super().default(obj)
+
+
+class CustomJSONResponse(JSONResponse):
+    """JSONResponse с кастомным энкодером для поддержки datetime и других типов."""
+    def render(self, content: Any) -> bytes:
+        return json.dumps(
+            content,
+            cls=CustomJSONEncoder,
+            ensure_ascii=False,
+            allow_nan=True,
+            indent=None,
+            separators=(", ", ":"),
+        ).encode("utf-8")
+
+
 app = FastAPI(
     title="ГКУ ОП Заявки",
     description="Веб-интерфейс для просмотра заявок на оборудование",
     version="1.0.0",
     lifespan=lifespan,
+    default_response_class=CustomJSONResponse,
 )
+
+
+# Глобальный обработчик исключений — все ошибки возвращаются как JSON
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Перехватывает любые необработанные исключения и возвращает JSON."""
+    logger.error(f"Unhandled exception: {exc}", exc_info=True)
+    return CustomJSONResponse(
+        status_code=500,
+        content={"error": f"Внутренняя ошибка сервера: {str(exc)}", "detail": str(exc)},
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Перехватывает HTTPException и возвращает JSON."""
+    return CustomJSONResponse(
+        status_code=exc.status_code,
+        content={"error": exc.detail},
+    )
 
 # CORS middleware (разрешаем запросы с любых источников для production за Nginx)
 # ВАЖНО: allow_origins=["*"] и allow_credentials=True несовместимы по спецификации CORS.

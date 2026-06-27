@@ -1,0 +1,402 @@
+/* ============================================================
+   _layout.css — Сетка, хедер, футер, контейнеры
+   ============================================================ */
+
+/* ─── Header ───────────────────────────────────────────── */
+.header {
+  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  color: var(--color-text-inverse);
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  box-shadow: 0 2px 12px rgba(0,0,0,0.15);
+}
+
+.header-inner {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-3) var(--space-5);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  min-height: 48px;
+}
+
+.header-left {
+  display: flex;
+  align-items: center;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.header-title {
+  font-size: var(--font-size-2xl);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: -0.3px;
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header-title span { color: var(--color-primary); }
+
+.header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex: 0 0 auto;
+  margin-left: auto;
+  position: relative;
+}
+
+.header-right .auth-indicator {
+  font-size: var(--font-size-sm);
+  color: rgba(255,255,255,0.8);
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.header a {
+  color: var(--color-primary);
+  font-size: var(--font-size-base);
+  text-decoration: none;
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
+  transition: background var(--transition-fast);
+}
+
+.header a:hover {
+  background: rgba(233, 69, 96, 0.1);
+  text-decoration: none;
+}
+
+/* ─── Container ────────────────────────────────────────── */
+.container {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: var(--space-5);
+}
+
+/* ─── Фильтры ──────────────────────────────────────────── */
+.filters {
+  background: var(--color-surface);
+  padding: var(--space-4) var(--space-5);
+  border-radius: var(--radius-xl);
+  margin-bottom: var(--space-5);
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  align-items: center;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border-light);
+}
+
+.filters .input { flex: 1; min-width: 220px; }
+
+/* ─── Filter bar ───────────────────────────────────────── */
+.filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+  margin-bottom: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.filter-bar .search-results-info {
+  margin-bottom: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* ─── Кнопки действий ──────────────────────────────────── */
+.action-buttons {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: nowrap;
+  margin-bottom: var(--space-5);
+  justify-content: space-between;
+  align-items: center;
+}
+
+.action-buttons-right {
+  display: flex;
+  gap: var(--space-3);
+  align-items: center;
+  margin-left: auto;
+}
+
+/* ─── Обёртка для гамбургер-меню ───────────────────────── */
+.hamburger-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  z-index: var(--z-dropdown, 100);
+}
+
+/* ─── Выпадающее меню (гамбургер) ──────────────────────── */
+.dropdown-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  min-width: 220px;
+  z-index: var(--z-dropdown, 100);
+  padding: var(--space-2);
+}
+
+.dropdown-menu.show {
+  display: block;
+}
+
+.hamburger-menu {
+  display: none;
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  background: #fff;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: var(--shadow-lg);
+  min-width: 200px;
+  z-index: var(--z-dropdown, 100);
+  padding: var(--space-2);
+}
+
+.hamburger-menu.open {
+  display: block;
+}
+
+.hamburger-menu .nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: 6px;
+  transition: background var(--transition-base);
+  font-size: var(--font-size-sm);
+  white-space: nowrap;
+}
+
+.hamburger-menu .nav-link:hover {
+  background: var(--color-bg-hover, rgba(0,0,0,0.05));
+}
+
+.hamburger-menu .menu-icon {
+  font-size: 16px;
+  width: 20px;
+  text-align: center;
+}
+
+/* ─── Пункты выпадающего меню ──────────────────────────── */
+.dropdown-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+  color: var(--color-text);
+  text-decoration: none;
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-base);
+  cursor: pointer;
+  border: none;
+  background: none;
+  width: 100%;
+  text-align: left;
+  min-height: 44px;
+  white-space: nowrap;
+}
+
+.dropdown-item:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+}
+
+.dropdown-item-danger {
+  color: var(--color-error);
+}
+
+.dropdown-item-danger:hover {
+  background: var(--color-error-bg) !important;
+  color: var(--color-error) !important;
+}
+
+.dropdown-item-warning {
+  color: var(--color-warning-text);
+}
+
+.dropdown-item-warning:hover {
+  background: var(--color-warning-bg) !important;
+  color: var(--color-warning-text) !important;
+}
+
+/* ─── Фильтр-контролы ──────────────────────────────────── */
+.filter-controls-group {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.month-filter-controls,
+.office-filter-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  flex-shrink: 0;
+  position: relative;
+}
+
+/* ─── Выпадающие списки фильтров ───────────────────────── */
+.office-dropdown,
+.month-dropdown {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: var(--z-dropdown);
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-lg);
+  min-width: 220px;
+  max-height: 320px;
+  overflow-y: auto;
+  animation: dropdownFadeIn 0.15s ease;
+}
+
+.month-dropdown {
+  min-width: 180px;
+}
+
+.office-dropdown-header,
+.month-dropdown-header {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--color-border-light);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.office-dropdown-list,
+.month-dropdown-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.office-option,
+.month-option {
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  cursor: pointer;
+  transition: background var(--transition-fast);
+  border: none;
+  background: transparent;
+  text-align: left;
+  width: 100%;
+  font-family: var(--font-family);
+}
+
+.month-option {
+  display: block;
+}
+
+.office-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.office-option:hover,
+.month-option:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-primary);
+}
+
+.office-option.active,
+.month-option.active {
+  background: var(--color-primary-light);
+  color: var(--color-primary);
+  font-weight: var(--font-weight-medium);
+}
+
+.office-option:not(:last-child),
+.month-option:not(:last-child) {
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+.office-option-abbr {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  min-width: 32px;
+}
+
+.office-option-full {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.office-option.active .office-option-abbr {
+  color: var(--color-primary);
+}
+
+.office-option.active .office-option-full {
+  color: var(--color-primary);
+  opacity: 0.8;
+}
+
+.office-option-loading,
+.office-option-error {
+  padding: var(--space-3);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-align: center;
+  cursor: default;
+}
+
+.office-option-error {
+  color: var(--color-error);
+}
+
+/* ─── Управление пользователями ────────────────────────── */
+.users-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: var(--space-4);
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.users-header h2 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  margin: 0;
+}

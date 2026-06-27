@@ -630,12 +630,8 @@
                         </div>
                         ${s.soglasovano_line ? `<div class="info-item" style="grid-column: 1 / -1;">
                             <div class="label">Согласование</div>
-                            <div class="value"><span class="soglasovano-line">${s.soglasovano_line}</span></div>
+                            <div class="value"><span class="soglasovano-line">${s.soglasovano_line.replace(/\n/g, '<br>')}</span></div>
                         </div>` : ''}
-                        <div class="info-item">
-                            <div class="label">Приоритет</div>
-                            <div class="value">${s.priority || '—'}</div>
-                        </div>
                         <div class="info-item">
                             <div class="label">Требуется</div>
                             <div class="value">${s.required_action || '—'}</div>
@@ -655,14 +651,6 @@
                         <div class="info-item">
                             <div class="label">Тех. вывод</div>
                             <div class="value">${s.tech_conclusion || '—'}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Активна</div>
-                            <div class="value">${t.is_active ? 'Да' : 'Нет'}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">В архиве</div>
-                            <div class="value">${isArchived ? 'Да' : 'Нет'}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Дата создания</div>

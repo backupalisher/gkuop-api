@@ -1,0 +1,327 @@
+/* ============================================================
+   _base.css — Базовая типографика и элементы
+   ============================================================ */
+
+body {
+  font-family: var(--font-family);
+  font-size: var(--font-size-base);
+  line-height: var(--line-height-normal);
+  color: var(--color-text);
+  background: var(--color-bg);
+  min-height: 100vh;
+}
+
+/* ─── Карточки ─────────────────────────────────────────── */
+.card {
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  padding: var(--space-6);
+  margin-bottom: var(--space-5);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border-light);
+  transition: box-shadow var(--transition-base);
+}
+
+.card:hover {
+  box-shadow: var(--shadow-lg);
+}
+
+.card h2 {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: var(--space-4);
+  font-weight: var(--font-weight-semibold);
+}
+
+/* ─── Сетка информации ─────────────────────────────────── */
+.info-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: var(--space-3);
+}
+
+.info-item .label {
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  margin-bottom: var(--space-1);
+  font-weight: var(--font-weight-medium);
+  letter-spacing: 0.3px;
+}
+
+.info-item .value {
+  font-size: var(--font-size-md);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  line-height: var(--line-height-tight);
+  word-break: break-word;
+  overflow-wrap: break-word;
+  hyphens: auto;
+}
+
+/* ─── Загрузка / Пусто / Ошибка ────────────────────────── */
+.loading, .empty {
+  text-align: center;
+  padding: var(--space-10);
+  color: var(--color-text-muted);
+}
+
+.loading::before {
+  content: '';
+  display: inline-block;
+  width: 24px;
+  height: 24px;
+  border: 3px solid var(--color-border);
+  border-top-color: var(--color-primary);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin-right: var(--space-2);
+  vertical-align: middle;
+}
+
+.error-msg {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-lg);
+  margin-bottom: var(--space-4);
+  display: none;
+  font-size: var(--font-size-base);
+  border-left: 4px solid var(--color-error);
+  animation: slideDown 0.3s ease;
+}
+
+.error-msg.success {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+  border-left-color: var(--color-success);
+}
+
+/* ─── Согласование ─────────────────────────────────────── */
+.soglasovano-line {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+  padding: var(--space-2) var(--space-4);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  display: inline-block;
+  border-left: 4px solid #059669;
+}
+
+/* ─── Таблица согласованных позиций ─────────────────────── */
+.soglasovanie-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-2);
+}
+
+.soglasovanie-table th,
+.soglasovanie-table td {
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.soglasovanie-table th {
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  background: var(--color-surface-secondary);
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.soglasovanie-table td {
+  color: var(--color-text-primary);
+}
+
+.soglasovanie-table tr:last-child td {
+  border-bottom: none;
+}
+
+.soglasovanie-table tr:hover td {
+  background: var(--color-surface-hover);
+}
+
+.status-approved {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+  display: inline-block;
+}
+
+/* ─── Бейджи статусов ──────────────────────────────────── */
+.status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 2px var(--space-3);
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  white-space: normal;
+  line-height: 1.6;
+  text-align: center;
+}
+
+.status-new { background: var(--color-status-new-bg); color: var(--color-status-new-text); }
+.status-work { background: var(--color-status-work-bg); color: var(--color-status-work-text); }
+.status-ready { background: var(--color-status-ready-bg); color: var(--color-status-ready-text); }
+.status-approved { background: var(--color-status-approved-bg); color: var(--color-status-approved-text); }
+.status-rejected { background: var(--color-status-rejected-bg); color: var(--color-status-rejected-text); }
+.status-parts { background: var(--color-status-parts-bg); color: var(--color-status-parts-text); }
+.status-resolved { background: var(--color-status-resolved-bg); color: var(--color-status-resolved-text); }
+.status-completed { background: var(--color-status-completed-bg); color: var(--color-status-completed-text); }
+.status-completed::before { content: "✓ "; font-weight: var(--font-weight-bold); }
+.status-default { background: var(--color-status-default-bg); color: var(--color-status-default-text); }
+
+.completed-date {
+  display: block;
+  font-size: 0.7rem;
+  line-height: 1.2;
+  opacity: 0.85;
+  white-space: nowrap;
+}
+
+/* ─── Ссылка на заявку ─────────────────────────────────── */
+.ticket-link {
+  color: #1976d2;
+  text-decoration: none;
+  font-weight: var(--font-weight-semibold);
+  transition: color var(--transition-fast);
+}
+
+.ticket-link:hover {
+  color: #1565c0;
+  text-decoration: none;
+}
+
+/* ─── Иконки ───────────────────────────────────────────── */
+.paperclip-icon {
+  font-size: 1em;
+  margin-left: 5px;
+  color: var(--color-text-muted);
+  vertical-align: middle;
+  display: inline-block;
+  line-height: 1;
+  opacity: 1;
+  transition: opacity var(--transition-fast);
+}
+
+.ticket-link:hover .paperclip-icon {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.comment-icon-list {
+  font-size: 0.9em;
+  margin-left: 4px;
+  color: var(--color-text-muted);
+  vertical-align: middle;
+  display: inline-block;
+  line-height: 1;
+  opacity: 0.8;
+  transition: opacity var(--transition-fast), color var(--transition-fast);
+  cursor: default;
+}
+
+.ticket-link:hover .comment-icon-list {
+  opacity: 1;
+  color: var(--color-primary);
+}
+
+.comment-icon-header {
+  font-size: 0.75em;
+  margin-left: 6px;
+  color: var(--color-primary) !important;
+  vertical-align: middle;
+  display: inline;
+  line-height: inherit;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast);
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.comment-icon-header:hover {
+  opacity: 1;
+}
+
+.comment-icon-detail {
+  font-size: 0.85em;
+  margin-left: 6px;
+  color: var(--color-primary);
+  vertical-align: middle;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0.85;
+  transition: opacity var(--transition-fast), transform var(--transition-fast);
+  text-decoration: none;
+}
+
+.comment-icon-detail:hover {
+  opacity: 1;
+  transform: scale(1.1);
+}
+
+.comment-count-badge {
+  font-size: 0.9em;
+  font-weight: 600;
+  background: var(--color-primary);
+  color: #fff !important;
+  border-radius: 10px;
+  padding: 1px 5px;
+  min-width: 16px;
+  text-align: center;
+  line-height: 1.4;
+  display: inline;
+}
+
+/* ─── Результаты поиска ────────────────────────────────── */
+.search-results-info {
+  margin-bottom: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+}
+
+/* ─── Индикатор прогресса перестройки БД ───────────────── */
+.rebuild-progress {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-info-bg);
+  border-radius: var(--radius-md);
+  color: var(--color-info-text);
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  margin-bottom: var(--space-2);
+  animation: progressPulse 1.5s ease-in-out infinite;
+}
+
+.rebuild-progress .spinner-inline {
+  flex-shrink: 0;
+}
+
+.rebuild-progress.error {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+  animation: none;
+}
+
+.rebuild-progress.completed {
+  background: var(--color-success-bg);
+  color: var(--color-success-text);
+  animation: none;
+}

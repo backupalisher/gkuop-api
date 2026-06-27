@@ -1,0 +1,381 @@
+/* ============================================================
+   _modals.css — Модальные окна
+   ============================================================ */
+
+.modal-overlay {
+  position: fixed;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(0,0,0,0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: var(--z-modal);
+  animation: fadeIn 0.2s ease;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+}
+
+.modal {
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-6);
+  max-width: 480px;
+  width: 90%;
+  box-shadow: var(--shadow-xl);
+  animation: slideUp 0.3s ease;
+}
+
+.modal h3 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-3);
+  color: var(--color-text);
+}
+
+.modal p {
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+  margin-bottom: var(--space-5);
+}
+
+/* ─── Модальное окно управления пользователями ──────────── */
+.modal-users {
+  max-width: 1000px !important;
+  width: 90% !important;
+  max-height: 80vh !important;
+  overflow: hidden !important;
+  display: flex !important;
+  flex-direction: column !important;
+  padding: 0 !important;
+}
+
+.modal-users-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 20px;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.modal-users-close {
+  background: none;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  color: var(--color-text-secondary);
+  padding: 4px 8px;
+}
+
+.modal-users-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 20px;
+}
+
+.modal-users-toolbar {
+  margin-bottom: 16px;
+}
+
+.modal-users .users-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--font-size-sm);
+}
+
+.modal-users .users-table th {
+  background: var(--color-surface-hover);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.5px;
+  border-bottom: 2px solid var(--color-border);
+  white-space: nowrap;
+}
+
+.modal-users .users-table td {
+  padding: var(--space-2) var(--space-3);
+  border-bottom: 1px solid var(--color-border-light);
+  vertical-align: middle;
+}
+
+.modal-users .users-table tr:hover td {
+  background: var(--color-surface-hover);
+}
+
+.modal-users .role-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: var(--radius-full);
+  font-size: var(--font-size-xs);
+  font-weight: var(--font-weight-medium);
+}
+
+.modal-users .role-badge.role-admin {
+  background: var(--color-primary-bg);
+  color: var(--color-primary);
+}
+
+.modal-users .role-badge.role-operator {
+  background: var(--color-info-bg);
+  color: var(--color-info-text);
+}
+
+.modal-users .btn-sm {
+  padding: 4px 10px;
+  font-size: var(--font-size-xs);
+  border: none;
+  border-radius: var(--radius-md);
+  cursor: pointer;
+  transition: all var(--transition-fast);
+  margin-inline: 1.3px;
+}
+
+.modal-users .btn-sm.btn-danger {
+  background: var(--color-error-bg);
+  color: var(--color-error-text);
+}
+
+.modal-users .btn-sm.btn-danger:hover {
+  background: var(--color-error);
+  color: white;
+}
+
+/* ─── Базовый контейнер содержимого модальных окон ──────── */
+.modal-content {
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-xl);
+  animation: slideUp 0.3s ease;
+  width: 90%;
+}
+
+/* ─── Модальное окно управления правами ──────────────────── */
+.modal-permissions {
+  max-width: 700px;
+}
+
+.modal-permissions h3 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-4);
+  color: var(--color-text);
+}
+
+.modal-permissions .permissions-container {
+  max-height: 60vh;
+  overflow-y: auto;
+  margin-bottom: var(--space-4);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-xl);
+  padding: var(--space-3);
+  background: var(--color-surface);
+}
+
+.modal-permissions .permission-category {
+  margin-bottom: var(--space-3);
+}
+
+.modal-permissions .permission-category:last-child {
+  margin-bottom: 0;
+}
+
+.modal-permissions .permission-category h4 {
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  padding-bottom: var(--space-1);
+  border-bottom: 1px solid var(--color-border);
+  background: var(--color-surface-hover);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+}
+
+.modal-permissions .permission-item {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  cursor: pointer;
+  border-radius: var(--radius-md);
+  transition: background var(--transition-base);
+}
+
+.modal-permissions .permission-item:hover {
+  background: var(--color-surface-hover);
+}
+
+.modal-permissions .permission-item input[type="checkbox"] {
+  margin-top: 4px;
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+  cursor: pointer;
+}
+
+.modal-permissions .permission-item .perm-name {
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text);
+  min-width: 140px;
+  flex-shrink: 0;
+}
+
+.modal-permissions .permission-item .perm-desc {
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  line-height: var(--line-height-relaxed);
+}
+
+.modal-permissions .form-actions {
+  display: flex;
+  gap: var(--space-3);
+  flex-wrap: wrap;
+  margin-top: var(--space-4);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+}
+
+.modal-permissions .form-actions .btn {
+  padding: var(--space-2) var(--space-5);
+  border: none;
+  border-radius: var(--radius-lg);
+  cursor: pointer;
+  font-size: var(--font-size-base);
+  font-weight: var(--font-weight-medium);
+  transition: all var(--transition-base);
+}
+
+.modal-permissions .form-actions .btn-primary {
+  background: var(--color-primary);
+  color: var(--color-text-inverse);
+}
+
+.modal-permissions .form-actions .btn-primary:hover {
+  background: var(--color-primary-hover);
+  transform: translateY(-1px);
+}
+
+.modal-permissions .form-actions .btn-secondary {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+}
+
+.modal-permissions .form-actions .btn-secondary:hover {
+  background: var(--color-border);
+}
+
+.modal-permissions .form-actions .btn-ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+  border: 1px solid transparent;
+}
+
+.modal-permissions .form-actions .btn-ghost:hover {
+  background: var(--color-surface-hover);
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.modal-permissions .form-error {
+  color: var(--color-error);
+  font-size: var(--font-size-sm);
+  margin-top: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  background: var(--color-error-bg);
+  border-radius: var(--radius-md);
+  display: none;
+}
+
+/* ─── Модальное окно для формы пользователя ─────────────── */
+.modal-user-form {
+  max-width: 480px;
+  width: 90%;
+  background: var(--color-surface);
+  border-radius: var(--radius-2xl);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-xl);
+  animation: slideUp 0.3s ease;
+}
+
+.modal-user-form h3 {
+  font-size: var(--font-size-xl);
+  font-weight: var(--font-weight-semibold);
+  margin-bottom: var(--space-4);
+  color: var(--color-text);
+}
+
+.modal-user-form .form-group {
+  margin-bottom: var(--space-3);
+}
+
+.modal-user-form .form-group label {
+  display: block;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-text-secondary);
+  margin-bottom: var(--space-1);
+}
+
+.modal-user-form .form-group .input {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  background: var(--color-bg);
+  color: var(--color-text);
+  box-sizing: border-box;
+}
+
+.modal-user-form .form-group .input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.15);
+}
+
+.modal-user-form .form-actions {
+  display: flex;
+  gap: var(--space-3);
+  justify-content: flex-end;
+  margin-top: var(--space-5);
+}
+
+/* ─── Сетка разрешений ──────────────────────────────────── */
+.permissions-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: var(--space-2);
+  margin: var(--space-4) 0;
+}
+
+.permissions-grid label {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface-hover);
+  cursor: pointer;
+  font-size: var(--font-size-sm);
+  color: var(--color-text);
+  transition: background var(--transition-base);
+}
+
+.permissions-grid label:hover {
+  background: var(--color-border);
+}
+
+.permissions-grid input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--color-primary);
+}

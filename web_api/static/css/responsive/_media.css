@@ -1,0 +1,349 @@
+/* ============================================================
+   _media.css — Медиа-запросы (Mobile First)
+   ============================================================ */
+
+/* Планшеты и меньше (768px) */
+@media (max-width: 768px) {
+  .container {
+    padding: var(--space-3);
+  }
+
+  .header {
+    flex-direction: column;
+    gap: var(--space-3);
+    padding: var(--space-3);
+  }
+
+  .header .header-left,
+  .header .header-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .filters {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .filter-bar {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .filter-bar .filter-group {
+    width: 100%;
+  }
+
+  .filter-bar select,
+  .filter-bar input {
+    width: 100%;
+  }
+
+  .action-buttons {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .action-buttons .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .tickets-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .tickets-stats {
+    width: 100%;
+    justify-content: space-around;
+  }
+
+  .ticket-card .ticket-header {
+    flex-direction: column;
+  }
+
+  .ticket-card .ticket-footer {
+    flex-direction: column;
+    gap: var(--space-2);
+    align-items: flex-start;
+  }
+
+  .pagination {
+    gap: var(--space-1);
+  }
+
+  .page-btn {
+    min-width: 32px;
+    height: 32px;
+    font-size: var(--font-size-xs);
+  }
+
+  .modal {
+    width: 95%;
+    margin: var(--space-4);
+    max-height: 85vh;
+  }
+
+  .modal-users {
+    width: 95%;
+    margin: var(--space-4);
+  }
+
+  .modal-content {
+    padding: var(--space-4);
+  }
+
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ticket-detail .detail-header {
+    flex-direction: column;
+  }
+
+  .images-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+
+  .toast-container {
+    top: auto;
+    bottom: var(--space-4);
+    right: var(--space-2);
+    left: var(--space-2);
+  }
+
+  .toast {
+    min-width: auto;
+    max-width: 100%;
+  }
+
+  .hamburger {
+    display: flex;
+  }
+
+  .dropdown-menu {
+    position: fixed;
+    top: 60px;
+    left: 0;
+    right: 0;
+    width: 100%;
+    border-radius: 0;
+    box-shadow: var(--shadow-lg);
+    max-height: calc(100vh - 60px);
+    overflow-y: auto;
+  }
+
+  .user-management-header {
+    flex-direction: column;
+    gap: var(--space-3);
+  }
+
+  .search-wrap {
+    width: 100%;
+  }
+
+  .search-wrap input {
+    width: 100%;
+  }
+
+  .auth-form {
+    padding: var(--space-6);
+  }
+
+  .comment-input {
+    flex-direction: column;
+  }
+
+  .tabs {
+    gap: 0;
+  }
+
+  .tab-btn {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-xs);
+  }
+
+  .attachments-list {
+    flex-direction: column;
+  }
+
+  .attachment-item {
+    width: 100%;
+  }
+}
+
+/* Мобильные телефоны (430px) */
+@media (max-width: 430px) {
+  .container {
+    padding: var(--space-2);
+  }
+
+  .header {
+    padding: var(--space-2);
+  }
+
+  .header h1 {
+    font-size: var(--font-size-lg);
+  }
+
+  .tickets-header h1 {
+    font-size: var(--font-size-xl);
+  }
+
+  .ticket-detail .detail-title {
+    font-size: var(--font-size-xl);
+  }
+
+  .ticket-detail .detail-section {
+    padding: var(--space-4);
+  }
+
+  .images-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .modal {
+    width: 100%;
+    margin: var(--space-2);
+    border-radius: var(--radius-lg);
+  }
+
+  .modal-users {
+    width: 100%;
+    margin: var(--space-2);
+  }
+
+  .auth-form {
+    padding: var(--space-4);
+  }
+
+  .auth-form h2 {
+    font-size: var(--font-size-xl);
+  }
+
+  .toast-container {
+    bottom: var(--space-2);
+    right: var(--space-2);
+    left: var(--space-2);
+  }
+
+  .toast {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+  }
+
+  .tickets-stats {
+    gap: var(--space-2);
+  }
+
+  .tickets-stats .stat-value {
+    font-size: var(--font-size-xl);
+  }
+
+  .detail-grid {
+    gap: var(--space-3);
+  }
+
+  .history-item {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .comment-item {
+    flex-direction: column;
+    gap: var(--space-2);
+  }
+
+  .tab-btn {
+    padding: var(--space-2);
+    font-size: 11px;
+  }
+
+  .tab-btn .count {
+    min-width: 18px;
+    height: 18px;
+    font-size: 10px;
+  }
+}
+
+/* Очень маленькие телефоны (360px) */
+@media (max-width: 360px) {
+  .header h1 {
+    font-size: var(--font-size-base);
+  }
+
+  .tickets-header h1 {
+    font-size: var(--font-size-lg);
+  }
+
+  .ticket-detail .detail-title {
+    font-size: var(--font-size-lg);
+  }
+
+  .btn {
+    padding: var(--space-2) var(--space-3);
+    font-size: var(--font-size-sm);
+  }
+
+  .page-btn {
+    min-width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  .tickets-stats .stat-value {
+    font-size: var(--font-size-lg);
+  }
+
+  .tickets-stats .stat-label {
+    font-size: 10px;
+  }
+
+  .auth-form {
+    padding: var(--space-3);
+  }
+}
+
+/* Планшеты в альбомной ориентации (768px-1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  .container {
+    padding: var(--space-4);
+  }
+
+  .images-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .detail-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+}
+
+/* Десктоп (1200px+) */
+@media (min-width: 1200px) {
+  .container {
+    max-width: 1200px;
+    margin: 0 auto;
+  }
+
+  .images-grid {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+/* prefers-reduced-motion */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* prefers-color-scheme (заглушка для будущей тёмной темы) */
+@media (prefers-color-scheme: dark) {
+  /* Тёмная тема будет добавлена позже */
+}

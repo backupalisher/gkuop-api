@@ -78,6 +78,22 @@ class DatabaseManager:
         self._retry_delay = config.get('retry_base_delay', 0.5)
         self._slow_query_threshold = config.get('slow_query_threshold_ms', 500.0)
 
+    def _ensure_transaction(self):
+        """Проверяет состояние транзакции и выполняет rollback, если она в состоянии ошибки.
+        Предотвращает ошибку 'current transaction is aborted, commands ignored until end of transaction block'.
+        """
+        if self.connection is not None:
+            try:
+                # Проверяем статус транзакции через выполнение простого запроса
+                self.cursor.execute("SELECT 1")
+                self.cursor.fetchone()
+            except Exception:
+                try:
+                    self.connection.rollback()
+                    logger.warning("Выполнен rollback транзакции (предыдущая транзакция была в состоянии ошибки)")
+                except Exception:
+                    pass
+
     # ─── Пул соединений ──────────────────────────────────────────────
 
     def _init_pool(self):
@@ -394,18 +410,36 @@ class DatabaseManager:
 
     def ticket_exists(self, ticket_number: str) -> bool:
         """Проверка существования заявки"""
-        self.cursor.execute(
-            "SELECT id FROM tickets WHERE ticket_number = %s", (ticket_number,)
-        )
-        return self.cursor.fetchone() is not None
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                "SELECT id FROM tickets WHERE ticket_number = %s", (ticket_number,)
+            )
+            return self.cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Ошибка проверки существования заявки {ticket_number}: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return False
 
     def get_ticket(self, ticket_number: str) -> Optional[Dict]:
         """Получение заявки по номеру"""
-        self.cursor.execute(
-            "SELECT * FROM tickets WHERE ticket_number = %s", (ticket_number,)
-        )
-        row = self.cursor.fetchone()
-        return dict(row) if row else None
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                "SELECT * FROM tickets WHERE ticket_number = %s", (ticket_number,)
+            )
+            row = self.cursor.fetchone()
+            return dict(row) if row else None
+        except Exception as e:
+            logger.error(f"Ошибка получения заявки {ticket_number}: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return None
 
     @_retry_on_db_error(max_attempts=3, base_delay=0.5)
     def save_ticket(self, ticket: Ticket) -> bool:
@@ -503,79 +537,106 @@ class DatabaseManager:
 
     def get_ticket_history(self, ticket_number: str) -> List[Dict]:
         """Получение хронологии заявки"""
-        self.cursor.execute(
-            "SELECT * FROM ticket_history WHERE ticket_number = %s ORDER BY received_date ASC",
-            (ticket_number,)
-        )
-        history_rows = self.cursor.fetchall()
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                "SELECT * FROM ticket_history WHERE ticket_number = %s ORDER BY received_date ASC",
+                (ticket_number,)
+            )
+            history_rows = self.cursor.fetchall()
 
-        self.cursor.execute(
-            """SELECT comment_text, changed_fields, status_before, status_after,
-                      received_date, created_at
-               FROM ticket_comments WHERE ticket_number = %s ORDER BY received_date ASC""",
-            (ticket_number,)
-        )
-        comment_rows = self.cursor.fetchall()
+            self.cursor.execute(
+                """SELECT comment_text, changed_fields, status_before, status_after,
+                          received_date, created_at
+                   FROM ticket_comments WHERE ticket_number = %s ORDER BY received_date ASC""",
+                (ticket_number,)
+            )
+            comment_rows = self.cursor.fetchall()
 
-        result = []
-        for row in history_rows:
-            changed_fields = row.get('changed_fields')
-            if changed_fields and isinstance(changed_fields, dict):
-                changes = dict(changed_fields)
-            else:
-                changes = {}
-                _excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
-                for field in ['subject', 'inventory_number', 'printer_model', 'office', 'cabinet',
-                              'component', 'status', 'priority', 'assigned_to', 'author_name',
-                              'contact_phone', 'department', 'position', 'current_note',
-                              'required_action', 'cause', 'fault_description', 'work_done',
-                              'tech_conclusion', 'soglasovano_line']:
-                    if field in _excluded:
-                        continue
-                    val = row.get(field)
-                    if val:
-                        changes[field] = val
-            result.append({
-                'type': 'snapshot', 'date': row['received_date'],
-                'created_at': row['created_at'], 'changed_fields': changes,
-            })
+            result = []
+            for row in history_rows:
+                changed_fields = row.get('changed_fields')
+                if changed_fields and isinstance(changed_fields, dict):
+                    changes = dict(changed_fields)
+                else:
+                    changes = {}
+                    _excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+                    for field in ['subject', 'inventory_number', 'printer_model', 'office', 'cabinet',
+                                  'component', 'status', 'priority', 'assigned_to', 'author_name',
+                                  'contact_phone', 'department', 'position', 'current_note',
+                                  'required_action', 'cause', 'fault_description', 'work_done',
+                                  'tech_conclusion', 'soglasovano_line']:
+                        if field in _excluded:
+                            continue
+                        val = row.get(field)
+                        if val:
+                            changes[field] = val
+                result.append({
+                    'type': 'snapshot', 'date': row['received_date'],
+                    'created_at': row['created_at'], 'changed_fields': changes,
+                })
 
-        for row in comment_rows:
-            result.append({
-                'type': 'comment', 'comment': row['comment_text'],
-                'changes': row['changed_fields'],
-                'status_before': row['status_before'], 'status_after': row['status_after'],
-                'date': row['received_date'], 'created_at': row['created_at'],
-            })
+            for row in comment_rows:
+                result.append({
+                    'type': 'comment', 'comment': row['comment_text'],
+                    'changes': row['changed_fields'],
+                    'status_before': row['status_before'], 'status_after': row['status_after'],
+                    'date': row['received_date'], 'created_at': row['created_at'],
+                })
 
-        result.sort(key=lambda x: x.get('date') or x.get('created_at') or datetime.min)
-        return result
+            result.sort(key=lambda x: x.get('date') or x.get('created_at') or datetime.min)
+            return result
+        except Exception as e:
+            logger.error(f"Ошибка получения истории заявки {ticket_number}: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return []
 
     def get_last_history_record(self, ticket_number: str) -> Optional[Dict]:
         """Получение последней записи хронологии для заявки"""
-        self.cursor.execute(
-            "SELECT changed_fields FROM ticket_history WHERE ticket_number = %s AND changed_fields IS NOT NULL ORDER BY received_date DESC LIMIT 1",
-            (ticket_number,)
-        )
-        row = self.cursor.fetchone()
-        if row:
-            cf = row['changed_fields']
-            if cf and isinstance(cf, dict):
-                return {'changed_fields': dict(cf)}
-        return None
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                "SELECT changed_fields FROM ticket_history WHERE ticket_number = %s AND changed_fields IS NOT NULL ORDER BY received_date DESC LIMIT 1",
+                (ticket_number,)
+            )
+            row = self.cursor.fetchone()
+            if row:
+                cf = row['changed_fields']
+                if cf and isinstance(cf, dict):
+                    return {'changed_fields': dict(cf)}
+            return None
+        except Exception as e:
+            logger.error(f"Ошибка получения последней записи истории для {ticket_number}: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return None
 
     def get_statistics(self) -> Dict:
         """Получение статистики по заявкам"""
-        self.cursor.execute("""
-            SELECT COUNT(*) as total,
-                   COUNT(CASE WHEN is_active = true THEN 1 END) as active,
-                   COUNT(CASE WHEN status = 'В работе' THEN 1 END) as in_progress,
-                   COUNT(CASE WHEN status = 'Согласована' THEN 1 END) as approved,
-                   COUNT(DISTINCT inventory_number) as unique_devices,
-                   (SELECT COUNT(*) FROM tickets WHERE is_archived = TRUE) as archived
-            FROM tickets WHERE (is_archived IS NULL OR is_archived = FALSE)
-        """)
-        return dict(self.cursor.fetchone())
+        try:
+            self._ensure_transaction()
+            self.cursor.execute("""
+                SELECT COUNT(*) as total,
+                       COUNT(CASE WHEN is_active = true THEN 1 END) as active,
+                       COUNT(CASE WHEN status = 'В работе' THEN 1 END) as in_progress,
+                       COUNT(CASE WHEN status = 'Согласована' THEN 1 END) as approved,
+                       COUNT(DISTINCT inventory_number) as unique_devices,
+                       (SELECT COUNT(*) FROM tickets WHERE is_archived = TRUE) as archived
+                FROM tickets WHERE (is_archived IS NULL OR is_archived = FALSE)
+            """)
+            return dict(self.cursor.fetchone())
+        except Exception as e:
+            logger.error(f"Ошибка получения статистики: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return {}
 
     # ─── Методы для работы с задачами ────────────────────────────────
 
@@ -610,31 +671,67 @@ class DatabaseManager:
 
     def is_task(self, ticket_number: str) -> bool:
         """Проверить, находится ли заявка в списке задач"""
-        self.cursor.execute(
-            "SELECT id FROM ticket_tasks WHERE ticket_number = %s", (ticket_number,)
-        )
-        return self.cursor.fetchone() is not None
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                "SELECT id FROM ticket_tasks WHERE ticket_number = %s", (ticket_number,)
+            )
+            return self.cursor.fetchone() is not None
+        except Exception as e:
+            logger.error(f"Ошибка проверки задачи {ticket_number}: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return False
 
     def get_task_numbers(self) -> List[str]:
         """Получить список номеров заявок, находящихся в задачах"""
-        self.cursor.execute("SELECT ticket_number FROM ticket_tasks ORDER BY created_at DESC")
-        return [r['ticket_number'] for r in self.cursor.fetchall()]
+        try:
+            self._ensure_transaction()
+            self.cursor.execute("SELECT ticket_number FROM ticket_tasks ORDER BY created_at DESC")
+            return [r['ticket_number'] for r in self.cursor.fetchall()]
+        except Exception as e:
+            logger.error(f"Ошибка получения списка задач: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return []
 
     def get_task_offices(self) -> Dict[str, str]:
         """Получить словарь {номер_заявки: офис} для всех заявок в задачах"""
-        self.cursor.execute("""
-            SELECT tt.ticket_number, t.office
-            FROM ticket_tasks tt
-            LEFT JOIN tickets t ON tt.ticket_number = t.ticket_number
-            ORDER BY tt.created_at DESC
-        """)
-        return {r['ticket_number']: r['office'] for r in self.cursor.fetchall()}
+        try:
+            self._ensure_transaction()
+            self.cursor.execute("""
+                SELECT tt.ticket_number, t.office
+                FROM ticket_tasks tt
+                LEFT JOIN tickets t ON tt.ticket_number = t.ticket_number
+                ORDER BY tt.created_at DESC
+            """)
+            return {r['ticket_number']: r['office'] for r in self.cursor.fetchall()}
+        except Exception as e:
+            logger.error(f"Ошибка получения офисов задач: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return {}
 
     def get_task_count(self) -> int:
         """Получить количество заявок в задачах"""
-        self.cursor.execute("SELECT COUNT(*) as cnt FROM ticket_tasks")
-        row = self.cursor.fetchone()
-        return row['cnt'] if row else 0
+        try:
+            self._ensure_transaction()
+            self.cursor.execute("SELECT COUNT(*) as cnt FROM ticket_tasks")
+            row = self.cursor.fetchone()
+            return row['cnt'] if row else 0
+        except Exception as e:
+            logger.error(f"Ошибка получения количества задач: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return 0
 
     def get_offices(self) -> List[Dict[str, Any]]:
         """Получить список уникальных адресов офисов из заявок.
@@ -643,23 +740,32 @@ class DatabaseManager:
             Список словарей с ключами 'office' (полный адрес) и 'abbreviated' (сокращение).
             Отсортирован по сокращённому названию.
         """
-        self.cursor.execute("""
-            SELECT DISTINCT t.office
-            FROM tickets t
-            WHERE t.office IS NOT NULL AND t.office != ''
-            ORDER BY t.office
-        """)
-        rows = self.cursor.fetchall()
-        # Импортируем функцию сокращения адресов
-        from utils.helpers import abbreviate_office
-        result = []
-        for r in rows:
-            office = r['office']
-            result.append({
-                'office': office,
-                'abbreviated': abbreviate_office(office),
-            })
-        return result
+        try:
+            self._ensure_transaction()
+            self.cursor.execute("""
+                SELECT DISTINCT t.office
+                FROM tickets t
+                WHERE t.office IS NOT NULL AND t.office != ''
+                ORDER BY t.office
+            """)
+            rows = self.cursor.fetchall()
+            # Импортируем функцию сокращения адресов
+            from utils.helpers import abbreviate_office
+            result = []
+            for r in rows:
+                office = r['office']
+                result.append({
+                    'office': office,
+                    'abbreviated': abbreviate_office(office),
+                })
+            return result
+        except Exception as e:
+            logger.error(f"Ошибка получения списка офисов: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return []
 
     @_retry_on_db_error(max_attempts=3, base_delay=0.5)
     def archive_old_tickets(self, before_date: datetime) -> Dict[str, Any]:
@@ -878,6 +984,7 @@ class DatabaseManager:
     def get_ticket_images(self, ticket_number: str, include_deleted: bool = False) -> List[Dict]:
         """Получение списка изображений для заявки"""
         try:
+            self._ensure_transaction()
             if include_deleted:
                 self.cursor.execute(
                     "SELECT * FROM ticket_images WHERE ticket_number = %s ORDER BY uploaded_at ASC",
@@ -897,6 +1004,7 @@ class DatabaseManager:
     def get_image_by_id(self, image_id: int) -> Optional[Dict]:
         """Получение записи изображения по ID"""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 "SELECT * FROM ticket_images WHERE id = %s",
                 (image_id,)
@@ -905,11 +1013,16 @@ class DatabaseManager:
             return dict(row) if row else None
         except Exception as e:
             print(f"Ошибка получения изображения: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
             return None
 
     def soft_delete_image(self, image_id: int) -> bool:
         """Мягкое удаление изображения (is_deleted = TRUE)"""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 "UPDATE ticket_images SET is_deleted = TRUE WHERE id = %s",
                 (image_id,)
@@ -924,6 +1037,7 @@ class DatabaseManager:
     def has_images(self, ticket_number: str) -> bool:
         """Проверка наличия изображений у заявки"""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 "SELECT COUNT(*) as cnt FROM ticket_images WHERE ticket_number = %s AND is_deleted = FALSE",
                 (ticket_number,)
@@ -932,6 +1046,10 @@ class DatabaseManager:
             return row['cnt'] > 0 if row else False
         except Exception as e:
             print(f"Ошибка проверки изображений: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
             return False
 
     # ─── Методы для работы с пользовательскими комментариями ─────────
@@ -940,6 +1058,7 @@ class DatabaseManager:
     def save_user_comment(self, comment: UserComment) -> Optional[int]:
         """Сохранение комментария пользователя к заявке. Возвращает ID комментария."""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 "SELECT 1 FROM tickets WHERE ticket_number = %s", (comment.ticket_number,)
             )
@@ -967,6 +1086,7 @@ class DatabaseManager:
     def get_user_comments(self, ticket_number: str) -> List[Dict]:
         """Получение списка комментариев пользователей для заявки (в хронологическом порядке)"""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 """SELECT id, ticket_number, author_username, author_name, comment_text, created_at
                    FROM user_comments
@@ -978,11 +1098,16 @@ class DatabaseManager:
             return [dict(r) for r in rows]
         except Exception as e:
             logger.error(f"Ошибка получения комментариев пользователей: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
             return []
 
     def get_user_comments_count(self, ticket_number: str) -> int:
         """Получение количества комментариев пользователей для заявки"""
         try:
+            self._ensure_transaction()
             self.cursor.execute(
                 "SELECT COUNT(*) as cnt FROM user_comments WHERE ticket_number = %s",
                 (ticket_number,)
@@ -991,6 +1116,10 @@ class DatabaseManager:
             return result['cnt'] if result else 0
         except Exception as e:
             logger.error(f"Ошибка получения количества комментариев: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
             return 0
 
     def get_tickets_has_comments(self, ticket_numbers: List[str]) -> Dict[str, bool]:
@@ -1001,6 +1130,7 @@ class DatabaseManager:
         if not ticket_numbers:
             return {}
         try:
+            self._ensure_transaction()
             placeholders = ", ".join(["%s"] * len(ticket_numbers))
             self.cursor.execute(
                 f"""SELECT ticket_number, COUNT(*) as cnt

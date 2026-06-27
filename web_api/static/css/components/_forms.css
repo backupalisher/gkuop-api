@@ -1,0 +1,204 @@
+/* ============================================================
+   _forms.css — Формы, инпуты, селекты
+   ============================================================ */
+
+/* ─── select-wrapper (стилизованный select) ──────────────── */
+.select-wrapper {
+  position: relative;
+  display: inline-block;
+  width: 100%;
+}
+
+.select-wrapper select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  padding-right: var(--space-8);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  background: var(--color-surface);
+  color: var(--color-text);
+  cursor: pointer;
+  outline: none;
+  transition: border-color var(--transition-base), box-shadow var(--transition-base);
+  min-height: 40px;
+}
+
+.select-wrapper select:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(233,69,96,0.1);
+}
+
+.select-wrapper::after {
+  content: '▾';
+  position: absolute;
+  right: var(--space-3);
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 12px;
+  color: var(--color-text-secondary);
+  pointer-events: none;
+}
+
+/* ─── Поля ввода ───────────────────────────────────────── */
+.input, .select {
+  padding: var(--space-2) var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  font-size: var(--font-size-base);
+  font-family: var(--font-family);
+  outline: none;
+  transition: all var(--transition-base);
+  background: var(--color-surface);
+  color: var(--color-text);
+  width: 100%;
+  min-height: 40px;
+}
+
+.input:focus, .select:focus {
+  border-color: var(--color-border-focus);
+  box-shadow: 0 0 0 3px rgba(233, 69, 96, 0.15);
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input.error, .select.error {
+  border-color: var(--color-error);
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.15);
+}
+
+.input.success, .select.success {
+  border-color: var(--color-success);
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.15);
+}
+
+/* ─── Обёртка поиска с иконкой 🔍 ──────────────────────── */
+.search-wrap {
+  position: relative;
+  flex: 1;
+  min-width: 220px;
+}
+
+.search-wrap .input {
+  width: 100%;
+  padding-right: 44px;
+}
+
+.search-wrap .search-btn {
+  position: absolute;
+  right: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: var(--font-size-lg);
+  padding: var(--space-2);
+  line-height: 1;
+  color: var(--color-text-muted);
+  transition: color var(--transition-fast);
+  border-radius: var(--radius-md);
+}
+
+.search-wrap .search-btn:hover {
+  color: var(--color-primary);
+  background: var(--color-surface-hover);
+}
+
+/* ─── Комментарии ───────────────────────────────────────── */
+.comment-input {
+  width: 100%;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-md);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-size: var(--font-size-base);
+  font-family: inherit;
+  resize: vertical;
+  min-height: 80px;
+  transition: border-color var(--transition-fast);
+  box-sizing: border-box;
+}
+
+.comment-input:focus {
+  outline: none;
+  border-color: var(--color-primary);
+  box-shadow: 0 0 0 2px var(--color-primary-alpha);
+}
+
+.comment-form-actions {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: var(--space-2);
+}
+
+.comment-char-counter {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+}
+
+.comment-error {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-danger);
+}
+
+/* ─── Upload area ──────────────────────────────────────── */
+.upload-area {
+  border: 2px dashed var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-5);
+  text-align: center;
+  cursor: pointer;
+  transition: all var(--transition-base);
+  margin-top: var(--space-2);
+  position: relative;
+}
+
+.upload-area:hover,
+.upload-area.drag-over {
+  border-color: var(--color-primary);
+  background: var(--color-primary-light);
+}
+
+.upload-area.drag-over {
+  border-style: solid;
+  background: var(--color-primary-bg);
+  transform: scale(1.02);
+  box-shadow: 0 0 0 4px rgba(233, 69, 96, 0.15);
+}
+
+.upload-area input[type="file"] { display: none; }
+
+.upload-area .upload-label {
+  font-size: var(--font-size-base);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  pointer-events: none;
+}
+
+.upload-area .upload-label strong { color: var(--color-primary); }
+
+.upload-area .upload-hint {
+  font-size: var(--font-size-xs);
+  color: var(--color-text-muted);
+  margin-top: var(--space-1);
+}
+
+.upload-progress {
+  margin-top: var(--space-2);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  animation: fadeIn 0.3s ease;
+}
+
+.upload-progress.error { color: var(--color-error); }
+.upload-progress.success { color: var(--color-success); }

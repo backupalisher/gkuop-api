@@ -1,0 +1,125 @@
+/* ============================================================
+   _tables.css — Таблицы
+   ============================================================ */
+
+.table-wrap {
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  overflow-x: auto;
+  overflow-y: hidden;
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--color-border-light);
+  -webkit-overflow-scrolling: touch;
+}
+
+th {
+  background: var(--color-surface-hover);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-size: var(--font-size-xs);
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  font-weight: var(--font-weight-semibold);
+  letter-spacing: 0.5px;
+  transition: color var(--transition-fast);
+}
+
+th:hover { color: var(--color-primary); }
+
+th .arrow {
+  margin-left: var(--space-1);
+  font-size: 10px;
+  display: inline-block;
+  transition: transform var(--transition-fast);
+}
+
+td {
+  padding: var(--space-3) var(--space-4);
+  border-top: 1px solid var(--color-border-light);
+  font-size: var(--font-size-base);
+  vertical-align: middle;
+}
+
+tr {
+  transition: background var(--transition-base);
+}
+
+.table-wrap tbody tr:hover td {
+  background: #d0e2ff;
+  transition: background var(--transition-base);
+}
+
+.table-wrap tbody tr {
+  animation: rowFadeIn 0.25s ease both;
+}
+
+.table-wrap tbody tr:nth-child(1) { animation-delay: 0s; }
+.table-wrap tbody tr:nth-child(2) { animation-delay: 0.02s; }
+.table-wrap tbody tr:nth-child(3) { animation-delay: 0.04s; }
+.table-wrap tbody tr:nth-child(4) { animation-delay: 0.06s; }
+.table-wrap tbody tr:nth-child(5) { animation-delay: 0.08s; }
+.table-wrap tbody tr:nth-child(6) { animation-delay: 0.10s; }
+.table-wrap tbody tr:nth-child(7) { animation-delay: 0.12s; }
+.table-wrap tbody tr:nth-child(8) { animation-delay: 0.14s; }
+.table-wrap tbody tr:nth-child(9) { animation-delay: 0.16s; }
+.table-wrap tbody tr:nth-child(10) { animation-delay: 0.18s; }
+
+.table-wrap tbody tr:nth-child(even) {
+  background-color: #f8faff;
+}
+
+.table-wrap tbody tr.has-component {
+  background-color: #eeffed;
+}
+
+.table-wrap tbody tr.has-component:nth-child(even) {
+  background-color: #eeffed;
+}
+
+.table-wrap tbody tr:hover {
+  background-color: #d0e2ff;
+}
+
+/* ─── Users table ───────────────────────────────────────── */
+.users-table {
+  width: 100%;
+  border-collapse: collapse;
+  background: var(--color-surface);
+  border-radius: var(--radius-xl);
+  overflow: hidden;
+  box-shadow: var(--shadow-sm);
+}
+
+.users-table th {
+  background: var(--color-surface-hover);
+  padding: var(--space-3) var(--space-4);
+  text-align: left;
+  font-weight: var(--font-weight-semibold);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.users-table td {
+  padding: var(--space-3) var(--space-4);
+  border-bottom: 1px solid var(--color-border);
+  font-size: var(--font-size-base);
+  color: var(--color-text);
+}
+
+.users-table tr:last-child td {
+  border-bottom: none;
+}
+
+.users-table tr:hover td {
+  background: var(--color-surface-hover);
+}
+
+.actions-cell {
+  white-space: nowrap;
+}

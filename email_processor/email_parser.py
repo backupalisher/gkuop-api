@@ -222,16 +222,60 @@ class EmailParser:
 
         # Поиск ВСЕХ строк с "СОГЛАСОВАНО" в теле письма
         # Используем re.findall, чтобы не потерять ни одну позицию (была ошибка: re.search находил только первую)
-        soglasovano_matches = re.findall(r'^.*?СОГЛАСОВАНО.*?$', body, re.MULTILINE | re.IGNORECASE)
+        # Этап 1: ищем по строкам (с переносами) — стандартный случай
+        soglasovano_matches = re.findall(r'[^\n]*?СОГЛАСОВАНО[^\n]*', body, re.MULTILINE | re.IGNORECASE)
         if soglasovano_matches:
             # Объединяем все найденные строки через перенос строки
             result['soglasovano_line'] = '\n'.join(m.strip() for m in soglasovano_matches)
+        
+        # Этап 2: если не нашли через строки — возможно HTML склеил элементы без переносов.
+        # Ищем шаблон вида "ЦИФРЫ - ТЕКСТ - СОГЛАСОВАНО" в любом месте текста.
+        # Используем .*? (ленивый захват любых символов, включая переносы строк) с re.DOTALL.
+        # Разделитель между позициями: ищем до следующей цифры с дефисом или до конца текста.
+        if 'soglasovano_line' not in result:
+            soglasovano_inline = re.findall(
+                r'\d+\s*[-–—]\s*.*?СОГЛАСОВАНО',
+                body, re.DOTALL | re.IGNORECASE
+            )
+            if soglasovano_inline:
+                # Очищаем каждое совпадение от лишних пробелов и переносов внутри
+                cleaned = []
+                for m in soglasovano_inline:
+                    m_clean = re.sub(r'\s+', ' ', m.strip())
+                    cleaned.append(m_clean)
+                result['soglasovano_line'] = '\n'.join(cleaned)
+        
+        # Этап 3: если всё ещё не нашли — ищем просто все вхождения "СОГЛАСОВАНО"
+        # с окружающим контекстом (до 100 символов слева)
+        if 'soglasovano_line' not in result:
+            soglasovano_fallback = re.findall(
+                r'.{0,100}?СОГЛАСОВАНО',
+                body, re.DOTALL | re.IGNORECASE
+            )
+            if soglasovano_fallback:
+                cleaned = []
+                for m in soglasovano_fallback:
+                    m_clean = re.sub(r'\s+', ' ', m.strip())
+                    cleaned.append(m_clean)
+                result['soglasovano_line'] = '\n'.join(cleaned)
 
         # Парсинг ФИО отдельно
         full_name_pattern = r'Фамилия:\s*(.+?)\n\s*Имя:\s*(.+?)\n\s*Отчество:\s*(.+?)(?:\n|$)'
         match = re.search(full_name_pattern, body, re.DOTALL)
         if match:
             result['full_name'] = f"{match.group(1).strip()} {match.group(2).strip()} {match.group(3).strip()}"
+
+        # Fallback-парсинг статуса: если статус не найден через стандартный паттерн,
+        # пробуем найти "Статус: ..." в любом месте текста (даже без переноса строки после)
+        if 'status' not in result:
+            status_fallback = re.search(
+                r'Статус[:\s]*([^\n*]+?)(?:\s*[\n*]|\s*$|-\s*-\s*)',
+                body, re.IGNORECASE
+            )
+            if status_fallback:
+                value = status_fallback.group(1).strip()
+                if value and value not in ('*', '—', '-'):
+                    result['status'] = value
 
         # Альтернативный поиск инвентарного номера
         if not result.get('inventory_number'):

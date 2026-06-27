@@ -15,7 +15,7 @@ class TicketProcessor:
     TRACKED_FIELDS = [
         'status', 'priority', 'assigned_to', 'current_note', 'office', 'cabinet',
         'required_action', 'cause', 'fault_description', 'work_done', 'tech_conclusion',
-        'inventory_number', 'printer_model'
+        'inventory_number', 'printer_model', 'soglasovano_line'
     ]
 
     # Человеческие названия полей для комментариев
@@ -33,6 +33,7 @@ class TicketProcessor:
         'tech_conclusion': 'Тех. вывод',
         'inventory_number': 'Инвентарный номер',
         'printer_model': 'Оборудование',
+        'soglasovano_line': 'Согласование',
     }
 
     def __init__(self, db_manager: DatabaseManager):
@@ -86,6 +87,10 @@ class TicketProcessor:
             if old_value != new_value and new_value:
                 changed[field] = new_value
 
+        # Статус обрабатывается по стандартной логике diff:
+        # добавляется в changed_fields только если реально изменился.
+        # Принудительная синхронизация статуса из письма выполняется
+        # в process_existing_ticket(), где это действительно нужно.
         return changed
 
     def _build_ticket_from_data(self, email_data: Dict) -> Ticket:
@@ -360,6 +365,26 @@ class TicketProcessor:
 
             # Обработка серийного номера (ошибочно указанного как инвентарный)
             changed_fields = self._handle_serial_number(current_ticket, email_data, changed_fields)
+
+            # Принудительная синхронизация статуса из письма:
+            # Если в письме явно указан статус — ВСЕГДА перезаписываем его,
+            # независимо от того, совпадает он с текущим в БД или нет.
+            # Это гарантирует, что при получении нового письма со статусом
+            # "Необходимы комплектующие" статус в БД будет обновлён,
+            # даже если заявка была в статусе "Выполнено".
+            # Логика: новое письмо по заявке = новое действие = статус актуален из письма.
+            #
+            # Исключение: если текущий статус "Выполнено", а новый "Решена" —
+            # не обновляем (Решена < Выполнено по иерархии статусов).
+            if email_data.get('status') and email_data['status'].strip():
+                email_status = email_data['status'].strip()
+                # Исключение: Выполнено -> Решена не обновляем
+                old_status_norm = old_status.strip() if old_status else ''
+                if old_status_norm == 'Выполнено' and email_status == 'Решена':
+                    print(f"⚠ Заявка #{ticket_number}: статус 'Выполнено' -> 'Решена' проигнорирован (иерархия)")
+                else:
+                    changed_fields['status'] = email_status
+                    new_status = email_status
 
             # Получаем последнюю запись истории для сравнения (чтобы сохранять только diff)
             last_history = self.db.get_last_history_record(ticket_number)
