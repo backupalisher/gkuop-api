@@ -216,6 +216,8 @@ class AuthMiddleware:
         token = None
         if auth_header.startswith('Bearer '):
             token = auth_header[7:]
+        elif request.url.path.startswith('/api/images/'):
+            token = request.query_params.get('access_token') or request.query_params.get('token')
 
         logger.debug(
             f"[DEBUG AuthMiddleware] path={request.url.path}, "

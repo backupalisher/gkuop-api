@@ -38,6 +38,7 @@ from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from services.image_manager import ImageManager, ImageValidationError
+from services.image_compressor import CompressionConfig as CompressorConfig, CompressionPreset
 
 # Импорт модуля аутентификации и авторизации
 from auth.middleware import AuthMiddleware, require_permission, get_current_user

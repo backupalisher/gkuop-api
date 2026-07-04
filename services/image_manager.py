@@ -441,9 +441,23 @@ class ImageManager:
 
     def get_absolute_path(self, relative_path: str) -> Optional[Path]:
         """Получение абсолютного пути к файлу по относительному пути из БД"""
+        if not relative_path:
+            return None
+
         try:
             base_dir = self.upload_dir.resolve()
-            full_path = (self.upload_dir / relative_path).resolve()
+            raw_path = Path(str(relative_path))
+
+            if raw_path.is_absolute():
+                full_path = raw_path.resolve()
+            elif raw_path.parts and raw_path.parts[0] == self.upload_dir.name:
+                # Старые записи могли хранить путь как uploads/tickets/...
+                project_root = self.upload_dir.parent.resolve()
+                full_path = (project_root / raw_path).resolve()
+            else:
+                # Новый формат: tickets/<ticket_number>/<filename>
+                full_path = (self.upload_dir / raw_path).resolve()
+
             if not full_path.is_relative_to(base_dir):
                 logger.warning(f"Отклонён путь вне uploads: {relative_path}")
                 return None

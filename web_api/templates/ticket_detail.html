@@ -131,6 +131,13 @@
             }
         }
 
+        function withFileAccessToken(url) {
+            if (!url || !url.startsWith('/api/images/')) return url;
+            if (typeof AUTH === 'undefined' || !AUTH.getToken()) return url;
+            const separator = url.includes('?') ? '&' : '?';
+            return `${url}${separator}access_token=${encodeURIComponent(AUTH.getToken())}`;
+        }
+
         function setAuth(username) {
             sessionStorage.setItem(AUTH_KEY, JSON.stringify({
                 username: username,
@@ -801,7 +808,7 @@
                     html += `<div class="images-grid">`;
                     for (let idx = 0; idx < images.length; idx++) {
                         const img = images[idx];
-                        const thumbUrl = img.thumbnail_url || img.download_url;
+                        const thumbUrl = withFileAccessToken(img.thumbnail_url || img.download_url);
                         const mime = img.mime_type || '';
                         const ext = img.original_filename ? '.' + img.original_filename.split('.').pop().toLowerCase() : '';
                         const isImage = mime.startsWith('image/');
@@ -1172,16 +1179,18 @@
                 const filename = file.original_filename || 'file';
                 const mime = file.mime_type || '';
                 const ext = filename.includes('.') ? '.' + filename.split('.').pop().toLowerCase() : '';
+                const downloadUrl = withFileAccessToken(file.download_url || `/api/images/${file.id}/download`);
+                const previewSrc = withFileAccessToken(file.thumbnail_url || file.download_url || `/api/images/${file.id}/download`);
                 return {
                     id: file.id,
-                    src: file.download_url || `/api/images/${file.id}/download`,
-                    previewSrc: file.thumbnail_url || file.download_url || `/api/images/${file.id}/download`,
+                    src: downloadUrl,
+                    previewSrc,
                     alt: filename,
                     mime,
                     ext,
                     isImage: mime.startsWith('image/'),
                     isPdf: mime === 'application/pdf' || ext === '.pdf',
-                    downloadUrl: file.download_url || `/api/images/${file.id}/download`
+                    downloadUrl
                 };
             });
 
