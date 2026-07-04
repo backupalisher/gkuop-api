@@ -640,6 +640,12 @@
                 .replace(/\u2029/g, '\\u2029');
         }
 
+        function listValue(value) {
+            const text = value == null ? '' : String(value).trim();
+            if (!text || text === '—') return '';
+            return escapeHtml(text);
+        }
+
         function formatDate(d) {
             if (!d) return '—';
             const dt = new Date(d);
@@ -1014,22 +1020,28 @@
                         const ticketUrl = encodeURIComponent(ticketNumberRaw);
                         const ticketJs = escapeJsSingleQuoted(ticketNumberRaw);
                         const statusText = escapeHtml(t.status || '—');
-                        const inventoryNumber = escapeHtml(t.inventory_number || '—');
-                        const requiredAction = escapeHtml(t.required_action || '—');
-                        const component = escapeHtml(t.component || '—');
+                        const inventoryNumber = listValue(t.inventory_number);
+                        const requiredActionRaw = String(t.required_action || '').trim();
+                        const hasRequiredAction = requiredActionRaw !== '' && requiredActionRaw !== '—';
+                        const requiredAction = hasRequiredAction ? escapeHtml(requiredActionRaw) : '';
+                        const componentRaw = String(t.component || '').trim();
+                        const hasComponent = componentRaw !== '' && componentRaw !== '—';
+                        const component = hasComponent
+                            ? `<span class="component-pill">${escapeHtml(componentRaw)}</span>`
+                            : '';
                         const officeCabinet = t.cabinet
-                            ? `${escapeHtml(t.office || '')} / ${escapeHtml(t.cabinet)}`
-                            : escapeHtml(t.office || '—');
+                            ? `${listValue(t.office)} / ${listValue(t.cabinet)}`
+                            : listValue(t.office);
                         const inTasks = isInTasks(t.ticket_number);
                         const taskBtn = (currentTab === 'active')
                             ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${ticketJs}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
-                        return `<tr class="${t.component ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
+                        return `<tr class="${hasComponent ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
                             <td data-label="№ заявки">${taskBtn}<a href="/tickets/${ticketUrl}" class="ticket-link" onclick="saveListState()" title="Заявка #${ticketNumber}">#${ticketNumber}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${statusText}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
                             <td data-label="Инв. номер">${inventoryNumber}</td>
-                            <td data-label="Требуется">${requiredAction}</td>
-                            <td data-label="Комплектующее">${component}</td>
+                            <td data-label="Требуется" class="${hasRequiredAction ? '' : 'cell-empty'}">${requiredAction}</td>
+                            <td data-label="Комплектующее" class="${hasComponent ? '' : 'cell-empty'}">${component}</td>
                             <td data-label="Кабинет">${officeCabinet}</td>
                             <td data-label="Обновлено">${formatDate(t.last_updated_date)}</td>
                         </tr>`;

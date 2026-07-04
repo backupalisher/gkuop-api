@@ -274,7 +274,6 @@ a:hover { text-decoration: underline; }
 
 .info-item .label {
   font-size: var(--font-size-xs);
-  text-transform: uppercase;
   color: var(--color-text-muted);
   margin-bottom: var(--space-1);
   font-weight: var(--font-weight-medium);
@@ -3719,7 +3718,7 @@ a {
 .modal-user-form .form-group label {
   color: var(--color-text-muted);
   font-size: var(--font-size-xs);
-  font-weight: 800;
+  font-weight: 600;
   letter-spacing: 0.08em;
 }
 
@@ -3908,9 +3907,64 @@ td {
   background-color: transparent;
 }
 
+.table-wrap tbody tr.has-component {
+  background: linear-gradient(90deg, rgba(179, 76, 179, 0.075), transparent 52%);
+  box-shadow: inset 1px 0 0 rgba(179, 76, 179, 0.22);
+}
+
+.table-wrap tbody tr.has-component td {
+  background: transparent;
+}
+
 .table-wrap tbody tr:hover,
 .table-wrap tbody tr:hover td {
   background: #edf9ff;
+}
+
+.component-pill {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 4px 10px;
+  border-radius: var(--radius-full);
+  background: #fff2ec;
+  color: #b34cb3;
+  border: 1px solid rgba(233, 84, 32, 0.22);
+  font-size: var(--font-size-sm);
+  font-weight: 620;
+  line-height: 1.25;
+  text-align: right;
+}
+
+.table-wrap td.cell-empty {
+  color: transparent;
+}
+
+.action-buttons-compact {
+  justify-content: space-between;
+  gap: var(--space-2);
+  align-items: center;
+}
+
+.action-buttons-compact .btn-action {
+  flex: 0 0 auto;
+}
+
+.action-buttons-compact .btn-back {
+  background: var(--color-info);
+  border-color: var(--color-info);
+  color: var(--color-text-inverse);
+}
+
+.action-buttons-compact .btn-back:hover {
+  background: var(--color-primary);
+  border-color: var(--color-primary);
+  color: var(--color-text-inverse);
+  box-shadow: var(--shadow-button-hover);
+}
+
+.info-item-full {
+  grid-column: 1 / -1;
 }
 
 .ticket-link {
@@ -4086,6 +4140,10 @@ td {
     padding: var(--space-2) var(--space-3);
     font-size: var(--font-size-sm);
   }
+
+  .table-wrap td.cell-empty {
+    display: none !important;
+  }
 }
 
 @media (max-width: 480px) {
@@ -4115,6 +4173,21 @@ td {
     animation-iteration-count: 1 !important;
     transition-duration: 1ms !important;
     scroll-behavior: auto !important;
+  }
+}
+
+@media (max-width: 480px) {
+  .action-buttons.action-buttons-compact {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+    width: 100%;
+  }
+
+  .action-buttons.action-buttons-compact .btn-action {
+    width: auto;
+    min-width: 0;
   }
 }
 

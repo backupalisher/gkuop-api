@@ -227,6 +227,12 @@
                 wrapper.appendChild(dot);
                 wrapper.appendChild(document.createTextNode(auth.username || ''));
                 indicator.appendChild(wrapper);
+                indicator.insertAdjacentHTML('beforeend', `
+                    <div class="hamburger-wrap header-ticket-menu" id="ticketHeaderMenu" style="display:none">
+                        <button class="hamburger-btn" aria-label="Дополнительные действия">☰</button>
+                        <div class="dropdown-menu" id="ticketHeaderDropdown"></div>
+                    </div>
+                `);
             }
         }
 
@@ -681,123 +687,96 @@
                 let html = '';
                 const ticketNumberSafe = displayValue(t.ticket_number);
                 const statusSafe = displayValue(s.status);
+                const isEmptyDisplayValue = (value) => {
+                    const text = value == null ? '' : String(value).trim();
+                    return text === '' || text === '—';
+                };
+                const renderInfoItem = (label, value, options = {}) => {
+                    if (!options.always && isEmptyDisplayValue(value)) return '';
+                    const renderedValue = options.raw ? value : displayValue(value);
+                    return `<div class="info-item${options.full ? ' info-item-full' : ''}">
+                        <div class="label">${escapeHtml(label)}</div>
+                        <div class="value">${renderedValue}</div>
+                    </div>`;
+                };
+                const formatComparableDate = (value) => {
+                    if (!value) return '';
+                    const dt = new Date(value);
+                    return Number.isNaN(dt.getTime()) ? String(value) : dt.toISOString();
+                };
 
                 // Кнопки действий
                 const isArchived = t.is_archived === true;
-                html += `<div class="action-buttons">`;
-                // При возврате к списку используем history.back() если есть сохранённое состояние,
-                // иначе переходим на главную. Это позволяет восстановить позицию прокрутки и фильтры.
-                html += `<a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад</a>`;
-                // Группа кнопок, прижатая к правому краю
-                html += `<div class="action-buttons-right">`;
+                let primaryActionHtml = '';
+                let headerMenuHtml = '';
                 if (!isArchived) {
                     // Кнопка "Задача 🔵" — показываем всегда, кроме случаев когда заявка уже назначена
                     const assignedTo = (s.assigned_to || '').trim();
                     if (!assignedTo) {
                         const isTask = s._is_task === true;
-                        html += `<button class="btn btn-action btn-task ${isTask ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTask()">${isTask ? '✅ Задача' : '🔵 Задача'}</button>`;
+                        headerMenuHtml += `<button class="dropdown-item" data-permission="manage_tasks" onclick="toggleTask()">${isTask ? 'Убрать из задач' : 'Добавить в задачи'}</button>`;
                     }
                     // Скрываем кнопку "Выполнено" для уже выполненных заявок
                     if (s.status === 'Выполнено' && data.completed_at) {
-                        html += `<button class="btn btn-action btn-complete btn-completed-disabled" disabled title="Заявка уже выполнена ${formatDate(data.completed_at)}">✓ Выполнено</button>`;
+                        primaryActionHtml = `<button class="btn btn-action btn-complete btn-completed-disabled" disabled title="Заявка уже выполнена ${formatDate(data.completed_at)}">✓ Выполнено</button>`;
                     } else {
-                        html += `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
+                        primaryActionHtml = `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
                     }
-                    // Гамбургер-меню (мобильное) — скрытые в нём кнопки
-                    html += `<div class="hamburger-wrap">
-                        <button class="hamburger-btn" aria-label="Дополнительные действия">☰</button>
-                        <div class="dropdown-menu">
-                            <button class="dropdown-item dropdown-item-danger" data-permission="admin_access" onclick="uncompleteTicket()">↩ Отменить выполнение</button>
-                            <button class="dropdown-item dropdown-item-warning" data-permission="archive_tickets" onclick="archiveTicket()">📦 В архив</button>
-                        </div>
-                    </div>`;
+                    headerMenuHtml += `<button class="dropdown-item dropdown-item-danger" data-permission="admin_access" onclick="uncompleteTicket()">Отменить выполнение</button>`;
+                    headerMenuHtml += `<button class="dropdown-item dropdown-item-warning" data-permission="archive_tickets" onclick="archiveTicket()">В архив</button>`;
                 } else {
-                    html += `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">↩ Восстановить</button>`;
+                    primaryActionHtml = `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">Восстановить</button>`;
                 }
-                html += `</div>`;
-                html += `</div>`;
+                if (isArchived) {
+                    headerMenuHtml += `<button class="dropdown-item" data-permission="archive_tickets" onclick="restoreTicket()">Восстановить</button>`;
+                }
 
-                // Основная информация
-                html += `<div class="card">
-                    <h2>Основная информация</h2>
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <div class="label">Номер заявки</div>
-                            <div class="value">#${ticketNumberSafe}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Статус</div>
-                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${statusSafe}${s.status && statusClass(s.status) === 'status-completed' && data.completed_at ? `<br><span class="completed-date">${formatDate(data.completed_at)}</span>` : ''}</span></div>
-                        </div>
-                        ${s.soglasovano_line ? `<div class="info-item" style="grid-column: 1 / -1;">
-                            <div class="label">Согласование</div>
-                            <div class="value">${renderSoglasovanie(s.soglasovano_line)}</div>
-                        </div>` : ''}
-                        <div class="info-item">
-                            <div class="label">Требуется</div>
-                            <div class="value">${displayValue(s.required_action)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Причина обращения</div>
-                            <div class="value">${displayValue(s.cause)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Описание неисправности</div>
-                            <div class="value">${displayValue(s.fault_description)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Проведены работы</div>
-                            <div class="value">${displayValue(s.work_done)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Тех. вывод</div>
-                            <div class="value">${displayValue(s.tech_conclusion)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Дата создания</div>
-                            <div class="value">${formatDate(t.first_received_date)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Последнее обновление</div>
-                            <div class="value">${formatDate(t.last_updated_date)}</div>
-                        </div>
-                    </div>
+                html += `<div class="action-buttons action-buttons-compact">
+                    <a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад</a>
+                    ${primaryActionHtml}
                 </div>`;
 
-                // Оборудование
+                const createdDate = formatDate(t.first_received_date);
+                const updatedDate = formatDate(t.last_updated_date);
+                const showUpdatedDate = formatComparableDate(t.first_received_date) !== formatComparableDate(t.last_updated_date);
+                const statusValue = `<span class="status-badge ${statusClass(s.status)}">${statusSafe}${s.status && statusClass(s.status) === 'status-completed' && data.completed_at ? `<br><span class="completed-date">${formatDate(data.completed_at)}</span>` : ''}</span>`;
+                const soglasovanieHtml = s.soglasovano_line ? renderSoglasovanie(s.soglasovano_line) : '';
+                const informationItems = [
+                    renderInfoItem('Номер заявки', `#${ticketNumberSafe}`, { raw: true, always: true }),
+                    renderInfoItem('Статус', statusValue, { raw: true, always: true }),
+                    renderInfoItem('Согласование', soglasovanieHtml, { raw: true, full: true }),
+                    renderInfoItem('Требуется', s.required_action),
+                    renderInfoItem('Причина обращения', s.cause),
+                    renderInfoItem('Описание неисправности', s.fault_description),
+                    renderInfoItem('Проведены работы', s.work_done),
+                    renderInfoItem('Тех. вывод', s.tech_conclusion),
+                    renderInfoItem('Инвентарный номер', s.inventory_number),
+                    renderInfoItem('Оборудование', s.printer_model),
+                    renderInfoItem('Комплектующее', s.component),
+                    renderInfoItem('Офис', s.office),
+                    renderInfoItem('Кабинет', s.cabinet),
+                    renderInfoItem('Подразделение', s.department),
+                    renderInfoItem('Примечание', s.current_note),
+                    renderInfoItem('Дата создания', createdDate),
+                    showUpdatedDate ? renderInfoItem('Последнее обновление', updatedDate) : '',
+                ].filter(Boolean).join('');
+
                 html += `<div class="card">
-                    <h2>Оборудование</h2>
-                    <div class="info-grid">
-                        <div class="info-item">
-                            <div class="label">Инвентарный номер</div>
-                            <div class="value">${displayValue(s.inventory_number)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Оборудование</div>
-                            <div class="value">${displayValue(s.printer_model)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Комплектующее</div>
-                            <div class="value">${displayValue(s.component)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Офис</div>
-                            <div class="value">${displayValue(s.office)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Кабинет</div>
-                            <div class="value">${displayValue(s.cabinet)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Подразделение</div>
-                            <div class="value">${displayValue(s.department)}</div>
-                        </div>
-                        <div class="info-item">
-                            <div class="label">Примечание</div>
-                            <div class="value">${displayValue(s.current_note)}</div>
-                        </div>
-                    </div>
+                    <h2>Информация по заявке</h2>
+                    <div class="info-grid">${informationItems}</div>
                 </div>`;
+
+                setTimeout(() => {
+                    const menu = document.getElementById('ticketHeaderMenu');
+                    const dropdown = document.getElementById('ticketHeaderDropdown');
+                    if (menu && dropdown) {
+                        dropdown.innerHTML = headerMenuHtml;
+                        menu.style.display = headerMenuHtml.trim() ? 'inline-flex' : 'none';
+                        if (typeof PermissionGuard !== 'undefined') {
+                            PermissionGuard.apply();
+                        }
+                    }
+                }, 0);
 
                 // Изображения и документы
                 const images = data.images || [];
