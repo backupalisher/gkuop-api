@@ -29,16 +29,19 @@
             </div>
             <div id="authIndicator" class="header-right" style="display:none">
                 <span class="auth-indicator"><span class="auth-dot"></span></span>
-                <button id="hamburgerBtn" class="btn btn-danger" aria-label="Меню" onclick="toggleHamburgerMenu()">☰</button>
+                <button id="hamburgerBtn" class="btn btn-ghost header-menu-btn" aria-label="Меню" onclick="toggleHamburgerMenu()">☰</button>
                 <div id="hamburgerMenu" class="hamburger-menu">
                     <a href="#" class="nav-link" data-page="users" data-role="admin" onclick="event.preventDefault(); toggleHamburgerMenu(); openUsersModal();">
-                        <span class="menu-icon">👥</span> Пользователи
+                        <span class="menu-icon" aria-hidden="true">Users</span> Пользователи
                     </a>
                     <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshData(); toggleHamburgerMenu();">
-                        <span class="menu-icon">⟳</span> Обновить данные
+                        <span class="menu-icon" aria-hidden="true">Sync</span> Обновить данные
+                    </a>
+                    <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshDataFromDate(); toggleHamburgerMenu();">
+                        <span class="menu-icon" aria-hidden="true">Date</span> Обновить данные с...
                     </a>
                     <a href="#" class="nav-link" onclick="handleLogout(); toggleHamburgerMenu();">
-                        <span class="menu-icon">🚪</span>Выйти
+                        <span class="menu-icon" aria-hidden="true">Exit</span> Выйти
                     </a>
                 </div>
             </div>
@@ -59,13 +62,13 @@
 
         <div class="tabs">
             <button class="tab-btn active" id="tabActive" onclick="switchTab('active')">
-                <span class="tab-icon">📃</span><span class="tab-label">Активные</span> <span class="count" id="countActive">—</span>
+                <span class="tab-label">Активные</span> <span class="count" id="countActive">—</span>
             </button>
             <button class="tab-btn" id="tabTasks" onclick="switchTab('tasks')">
-                <span class="tab-icon">📑</span><span class="tab-label">Задачи</span> <span class="count" id="countTasks">—</span>
+                <span class="tab-label">Задачи</span> <span class="count" id="countTasks">—</span>
             </button>
             <button class="tab-btn" id="tabArchived" onclick="switchTab('archived')">
-                <span class="tab-icon">🗃️</span><span class="tab-label">Архив</span> <span class="count" id="countArchived">—</span>
+                <span class="tab-label">Архив</span> <span class="count" id="countArchived">—</span>
             </button>
         </div>
 
@@ -288,6 +291,14 @@
             }
         }
 
+        function refreshDataFromDate() {
+            if (typeof rebuildDatabaseFromDate === 'function') {
+                rebuildDatabaseFromDate();
+            } else {
+                loadTickets();
+            }
+        }
+
         // Закрываем hamburger menu при клике вне его
         document.addEventListener('click', function(e) {
             const menu = document.getElementById('hamburgerMenu');
@@ -303,7 +314,14 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.querySelector('.auth-indicator').innerHTML = '<span class="auth-dot"></span>' + auth.username;
+                const nameEl = indicator.querySelector('.auth-indicator');
+                if (nameEl) {
+                    nameEl.textContent = '';
+                    const dot = document.createElement('span');
+                    dot.className = 'auth-dot';
+                    nameEl.appendChild(dot);
+                    nameEl.appendChild(document.createTextNode(auth.username || ''));
+                }
             }
             // Применяем permission UI если auth.js загружен
             if (typeof applyPermissionUI === 'function') {
@@ -523,7 +541,7 @@
             toast.className = `toast toast-${type}`;
             toast.innerHTML = `
                 <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
-                <span class="toast-msg">${message}</span>
+                <span class="toast-msg">${escapeHtml(message)}</span>
                 <button class="toast-close" onclick="this.closest('.toast').classList.add('removing');setTimeout(()=>this.closest('.toast').remove(),300)">✕</button>
             `;
             container.appendChild(toast);
@@ -542,11 +560,11 @@
                 overlay.className = 'modal-overlay';
                 overlay.innerHTML = `
                     <div class="modal">
-                        <h3>${title}</h3>
-                        <p>${message}</p>
+                        <h3>${escapeHtml(title)}</h3>
+                        <p>${escapeHtml(message)}</p>
                         <div class="modal-actions">
-                            <button class="btn btn-ghost">${cancelText}</button>
-                            <button class="btn btn-primary">${confirmText}</button>
+                            <button class="btn btn-ghost">${escapeHtml(cancelText)}</button>
+                            <button class="btn btn-primary">${escapeHtml(confirmText)}</button>
                         </div>
                     </div>
                 `;
@@ -608,8 +626,18 @@
         function escapeHtml(text) {
             if (!text) return '';
             const div = document.createElement('div');
-            div.appendChild(document.createTextNode(text));
+            div.appendChild(document.createTextNode(String(text)));
             return div.innerHTML;
+        }
+
+        function escapeJsSingleQuoted(text) {
+            return String(text ?? '')
+                .replace(/\\/g, '\\\\')
+                .replace(/'/g, "\\'")
+                .replace(/\r/g, '\\r')
+                .replace(/\n/g, '\\n')
+                .replace(/\u2028/g, '\\u2028')
+                .replace(/\u2029/g, '\\u2029');
         }
 
         function formatDate(d) {
@@ -712,7 +740,8 @@
                 var isActive = currentOffice === item.office;
                 var safeOffice = escapeHtml(item.office);
                 var safeAbbr = escapeHtml(item.abbreviated);
-                html += '<button class="office-option' + (isActive ? ' active' : '') + '" data-value="' + safeOffice + '" onclick="applyOfficeFilter(\'' + safeOffice.replace(/'/g, "\\'") + '\', event)">' +
+                var officeJs = escapeJsSingleQuoted(item.office);
+                html += '<button class="office-option' + (isActive ? ' active' : '') + '" data-value="' + safeOffice + '" onclick="applyOfficeFilter(\'' + officeJs + '\', event)">' +
                     '<span class="office-option-abbr">' + safeAbbr + '</span>' +
                     '<span class="office-option-full">' + safeOffice + '</span>' +
                     '</button>';
@@ -980,17 +1009,28 @@
                     if (resultsInfo) resultsInfo.style.display = 'none';
                 } else {
                     tbody.innerHTML = data.tickets.map((t, idx) => {
+                        const ticketNumberRaw = String(t.ticket_number || '');
+                        const ticketNumber = escapeHtml(ticketNumberRaw);
+                        const ticketUrl = encodeURIComponent(ticketNumberRaw);
+                        const ticketJs = escapeJsSingleQuoted(ticketNumberRaw);
+                        const statusText = escapeHtml(t.status || '—');
+                        const inventoryNumber = escapeHtml(t.inventory_number || '—');
+                        const requiredAction = escapeHtml(t.required_action || '—');
+                        const component = escapeHtml(t.component || '—');
+                        const officeCabinet = t.cabinet
+                            ? `${escapeHtml(t.office || '')} / ${escapeHtml(t.cabinet)}`
+                            : escapeHtml(t.office || '—');
                         const inTasks = isInTasks(t.ticket_number);
                         const taskBtn = (currentTab === 'active')
-                            ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${t.ticket_number}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
+                            ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${ticketJs}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
                         return `<tr class="${t.component ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
-                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${t.ticket_number}" class="ticket-link" onclick="saveListState()" title="Заявка #${t.ticket_number}">#${t.ticket_number}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
-                            <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${t.status || '—'}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
-                            <td data-label="Инв. номер">${t.inventory_number || '—'}</td>
-                            <td data-label="Требуется">${t.required_action || '—'}</td>
-                            <td data-label="Комплектующее">${t.component || '—'}</td>
-                            <td data-label="Кабинет">${t.cabinet ? t.office + ' / ' + t.cabinet : (t.office || '—')}</td>
+                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${ticketUrl}" class="ticket-link" onclick="saveListState()" title="Заявка #${ticketNumber}">#${ticketNumber}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
+                            <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${statusText}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
+                            <td data-label="Инв. номер">${inventoryNumber}</td>
+                            <td data-label="Требуется">${requiredAction}</td>
+                            <td data-label="Комплектующее">${component}</td>
+                            <td data-label="Кабинет">${officeCabinet}</td>
                             <td data-label="Обновлено">${formatDate(t.last_updated_date)}</td>
                         </tr>`;
                     }).join('');
@@ -1071,7 +1111,7 @@
             const el = document.getElementById('searchResultsInfo');
             if (!el) return;
             const cls = type ? ` rebuild-progress ${type}` : ' rebuild-progress';
-            el.innerHTML = `<div class="${cls.trim()}"><span class="spinner-inline"></span> ${message}</div>`;
+            el.innerHTML = `<div class="${cls.trim()}"><span class="spinner-inline"></span> ${escapeHtml(message)}</div>`;
             el.style.display = 'block';
         }
 
@@ -1136,6 +1176,60 @@
             }
         }
         const rebuildDatabase = PermissionGuard.protectFunction(_rebuildDatabase, 'rebuild_data');
+
+        async function _rebuildDatabaseFromDate() {
+            const today = new Date().toISOString().slice(0, 10);
+            const sinceDate = window.prompt(
+                'Введите дату начала обновления в формате YYYY-MM-DD',
+                today
+            );
+            if (sinceDate === null) return;
+
+            const normalizedDate = sinceDate.trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(normalizedDate)) {
+                showToast('Введите дату в формате YYYY-MM-DD', 'error');
+                return;
+            }
+
+            const parsedDate = new Date(`${normalizedDate}T00:00:00`);
+            if (Number.isNaN(parsedDate.getTime())) {
+                showToast('Некорректная дата начала обновления', 'error');
+                return;
+            }
+            if (normalizedDate > today) {
+                showToast('Дата начала обновления не может быть в будущем', 'error');
+                return;
+            }
+
+            const confirmed = await showModal(
+                'Обновление данных с даты',
+                `Обработать письма начиная с ${normalizedDate}? Это может занять некоторое время.`
+            );
+            if (!confirmed) return;
+
+            showError('');
+
+            try {
+                const data = await fetchJSON('/api/rebuild/start', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({since_date: normalizedDate})
+                });
+
+                if (data.error) {
+                    showError('Ошибка: ' + data.error);
+                    showToast('Ошибка обновления: ' + data.error, 'error');
+                    return;
+                }
+
+                showRebuildProgress(`Подготовка к обработке с ${normalizedDate}…`);
+                _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
+            } catch (e) {
+                showError('Ошибка соединения: ' + e.message);
+                showToast('Ошибка соединения: ' + e.message, 'error');
+            }
+        }
+        const rebuildDatabaseFromDate = PermissionGuard.protectFunction(_rebuildDatabaseFromDate, 'rebuild_data');
 
         function showError(msg) {
             const el = document.getElementById('errorMsg');

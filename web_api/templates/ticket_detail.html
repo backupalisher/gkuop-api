@@ -45,7 +45,7 @@
     </div>
 
     <script>
-        const ticketNumber = '{{ ticket_number }}';
+        const ticketNumber = {{ ticket_number | tojson }};
 
         // ─── Аутентификация ───────────────────────────────────
         const AUTH_KEY = 'gkuop_auth';
@@ -212,7 +212,14 @@
             const auth = getAuth();
             if (auth) {
                 indicator.style.display = 'flex';
-                indicator.innerHTML = '<span class="auth-indicator"><span class="auth-dot"></span>' + auth.username + '</span>';
+                indicator.textContent = '';
+                const wrapper = document.createElement('span');
+                wrapper.className = 'auth-indicator';
+                const dot = document.createElement('span');
+                dot.className = 'auth-dot';
+                wrapper.appendChild(dot);
+                wrapper.appendChild(document.createTextNode(auth.username || ''));
+                indicator.appendChild(wrapper);
             }
         }
 
@@ -265,7 +272,7 @@
             toast.className = `toast toast-${type}`;
             toast.innerHTML = `
                 <span class="toast-icon">${icons[type] || 'ℹ️'}</span>
-                <span class="toast-msg">${message}</span>
+                <span class="toast-msg">${escapeHtml(message)}</span>
                 <button class="toast-close" onclick="this.closest('.toast').classList.add('removing');setTimeout(()=>this.closest('.toast').remove(),300)">✕</button>
             `;
             container.appendChild(toast);
@@ -284,11 +291,11 @@
                 overlay.className = 'modal-overlay';
                 overlay.innerHTML = `
                     <div class="modal">
-                        <h3>${title}</h3>
-                        <p>${message}</p>
+                        <h3>${escapeHtml(title)}</h3>
+                        <p>${escapeHtml(message)}</p>
                         <div class="modal-actions">
-                            <button class="btn btn-ghost">${cancelText}</button>
-                            <button class="btn btn-primary">${confirmText}</button>
+                            <button class="btn btn-ghost">${escapeHtml(cancelText)}</button>
+                            <button class="btn btn-primary">${escapeHtml(confirmText)}</button>
                         </div>
                     </div>
                 `;
@@ -518,6 +525,7 @@
             'fault_description': 'Описание неисправности',
             'work_done': 'Проведены работы',
             'tech_conclusion': 'Тех. вывод',
+            'soglasovano_line': 'Согласование',
         };
 
         function fieldLabel(key) {
@@ -525,10 +533,94 @@
         }
 
         function escapeHtml(text) {
-            if (!text) return text;
+            if (text == null) return '';
             const div = document.createElement('div');
-            div.textContent = text;
+            div.textContent = String(text);
             return div.innerHTML;
+        }
+
+        function displayValue(value) {
+            const text = value == null ? '' : String(value).trim();
+            return text ? escapeHtml(text) : '—';
+        }
+
+        function parseSoglasovanieRows(value) {
+            if (!value) return [];
+            const wrapper = document.createElement('div');
+            wrapper.innerHTML = String(value)
+                .replace(/<\s*br\s*\/?\s*>/gi, '\n')
+                .replace(/<\/\s*(div|p|li|tr)\s*>/gi, '\n');
+            const text = (wrapper.textContent || wrapper.innerText || String(value))
+                .replace(/\u00a0/g, ' ')
+                .replace(/\r\n?/g, '\n');
+            const lineRows = text
+                .split(/\n/)
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map(line => {
+                    const statusMatches = line.match(/СОГЛАСОВАНО/gi) || [];
+                    if (statusMatches.length !== 1) return null;
+                    const match = line.match(/^(\d+)\s*(?:[-–—]|\s+)\s*(.*?)\s*(?:[-–—=])\s*(СОГЛАСОВАНО.*)$/i);
+                    if (!match) return null;
+                    return {
+                        number: match[1],
+                        title: match[2].replace(/\s+/g, ' ').trim(),
+                        status: match[3].trim()
+                    };
+                })
+                .filter(Boolean);
+            if (lineRows.length > 0) {
+                return lineRows;
+            }
+
+            const structuredMatches = [...text.matchAll(/(?<!\d)(\d+)\s*(?:[-–—]|\s{2,})\s*(.*?)\s*(?:[-–—=])\s*(СОГЛАСОВАНО)/gi)];
+            if (structuredMatches.length > 0) {
+                return structuredMatches
+                    .map(match => ({
+                        number: match[1],
+                        title: match[2].replace(/\s+/g, ' ').trim(),
+                        status: match[3].trim()
+                    }))
+                    .filter(row => row.title);
+            }
+
+            return text
+                .split(/\r?\n/)
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map(line => {
+                    const match = line.match(/^(\d+)\s*(?:[-–—]|\s+)\s*(.*?)\s*(?:[-–—=])\s*(СОГЛАСОВАНО.*)$/i);
+                    if (!match) {
+                        return { number: '', title: line, status: '' };
+                    }
+                    return {
+                        number: match[1],
+                        title: match[2].trim(),
+                        status: match[3].trim()
+                    };
+                });
+        }
+
+        function renderSoglasovanie(value) {
+            const rows = parseSoglasovanieRows(value);
+            if (!rows.length) return '';
+
+            const hasStructuredRows = rows.some(row => row.number || row.status);
+            if (!hasStructuredRows) {
+                return `<span class="soglasovano-line">${escapeHtml(value).replace(/\n/g, '<br>')}</span>`;
+            }
+
+            const tableRows = rows.map(row => `
+                <tr>                    
+                    <td><span class="status-approved">${escapeHtml(row.number || '—')}</td>
+                    <td><span class="status-approved">${escapeHtml(row.title || '—')}</td>
+                    
+                </tr>
+            `).join('');
+
+            return `<table class="soglasovanie-table">
+                <tbody>${tableRows}</tbody>
+            </table>`;
         }
 
         function formatDate(d) {
@@ -550,7 +642,7 @@
 
                 if (responseData.error) {
                     document.getElementById('content').innerHTML =
-                        `<div class="error">${responseData.error}</div>`;
+                        `<div class="error">${escapeHtml(responseData.error)}</div>`;
                     return;
                 }
 
@@ -580,6 +672,8 @@
                 }
 
                 let html = '';
+                const ticketNumberSafe = displayValue(t.ticket_number);
+                const statusSafe = displayValue(s.status);
 
                 // Кнопки действий
                 const isArchived = t.is_archived === true;
@@ -622,35 +716,35 @@
                     <div class="info-grid">
                         <div class="info-item">
                             <div class="label">Номер заявки</div>
-                            <div class="value">#${t.ticket_number}</div>
+                            <div class="value">#${ticketNumberSafe}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Статус</div>
-                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${s.status || '—'}${s.status && statusClass(s.status) === 'status-completed' && data.completed_at ? `<br><span class="completed-date">${formatDate(data.completed_at)}</span>` : ''}</span></div>
+                            <div class="value"><span class="status-badge ${statusClass(s.status)}">${statusSafe}${s.status && statusClass(s.status) === 'status-completed' && data.completed_at ? `<br><span class="completed-date">${formatDate(data.completed_at)}</span>` : ''}</span></div>
                         </div>
                         ${s.soglasovano_line ? `<div class="info-item" style="grid-column: 1 / -1;">
                             <div class="label">Согласование</div>
-                            <div class="value"><span class="soglasovano-line">${s.soglasovano_line.replace(/\n/g, '<br>')}</span></div>
+                            <div class="value">${renderSoglasovanie(s.soglasovano_line)}</div>
                         </div>` : ''}
                         <div class="info-item">
                             <div class="label">Требуется</div>
-                            <div class="value">${s.required_action || '—'}</div>
+                            <div class="value">${displayValue(s.required_action)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Причина обращения</div>
-                            <div class="value">${s.cause || '—'}</div>
+                            <div class="value">${displayValue(s.cause)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Описание неисправности</div>
-                            <div class="value">${s.fault_description || '—'}</div>
+                            <div class="value">${displayValue(s.fault_description)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Проведены работы</div>
-                            <div class="value">${s.work_done || '—'}</div>
+                            <div class="value">${displayValue(s.work_done)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Тех. вывод</div>
-                            <div class="value">${s.tech_conclusion || '—'}</div>
+                            <div class="value">${displayValue(s.tech_conclusion)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Дата создания</div>
@@ -669,31 +763,31 @@
                     <div class="info-grid">
                         <div class="info-item">
                             <div class="label">Инвентарный номер</div>
-                            <div class="value">${s.inventory_number || '—'}</div>
+                            <div class="value">${displayValue(s.inventory_number)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Оборудование</div>
-                            <div class="value">${s.printer_model || '—'}</div>
+                            <div class="value">${displayValue(s.printer_model)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Комплектующее</div>
-                            <div class="value">${s.component || '—'}</div>
+                            <div class="value">${displayValue(s.component)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Офис</div>
-                            <div class="value">${s.office || '—'}</div>
+                            <div class="value">${displayValue(s.office)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Кабинет</div>
-                            <div class="value">${s.cabinet || '—'}</div>
+                            <div class="value">${displayValue(s.cabinet)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Подразделение</div>
-                            <div class="value">${s.department || '—'}</div>
+                            <div class="value">${displayValue(s.department)}</div>
                         </div>
                         <div class="info-item">
                             <div class="label">Примечание</div>
-                            <div class="value">${escapeHtml(s.current_note) || '—'}</div>
+                            <div class="value">${displayValue(s.current_note)}</div>
                         </div>
                     </div>
                 </div>`;
@@ -711,6 +805,7 @@
                         const mime = img.mime_type || '';
                         const ext = img.original_filename ? '.' + img.original_filename.split('.').pop().toLowerCase() : '';
                         const isImage = mime.startsWith('image/');
+                        const isPdf = mime === 'application/pdf' || ext === '.pdf';
                         const typeClass = isImage ? 'file-type-img' :
                             ext === '.pdf' ? 'file-type-pdf' :
                             ext === '.docx' ? 'file-type-docx' :
@@ -721,15 +816,17 @@
                             ext === '.docx' ? 'DOCX' :
                             ext === '.xlsx' ? 'XLSX' :
                             ext === '.txt' ? 'TXT' : 'FILE';
+                        const previewAlt = escapeHtml(img.original_filename || 'Файл');
 
                         html += `<div class="image-card" data-index="${idx}">
                             <div class="preview-wrap" onclick="openLightbox(${idx})">
-                                <img src="${thumbUrl}" alt="${img.original_filename}" loading="lazy" class="${isImage ? '' : 'contain'}"
-                                    onerror="this.parentElement.innerHTML='<div class=\\'doc-icon\\'>📄</div>'">
+                                ${thumbUrl ? `<img src="${thumbUrl}" alt="${previewAlt}" loading="lazy" class="${isImage ? '' : 'contain'}"
+                                    onerror="this.style.display='none'; this.parentElement.querySelector('.doc-icon-fallback').style.display='flex';">` : ''}
+                                <div class="doc-icon doc-icon-fallback" style="${thumbUrl ? 'display:none' : 'display:flex'}">${isPdf ? 'PDF' : '📄'}</div>
                             </div>
                             <button class="delete-btn" data-permission="delete_images" onclick="deleteImage(${img.id})" title="Удалить">✕</button>
                             <div class="image-info">
-                                <div class="filename" title="${img.original_filename}">${img.original_filename}</div>
+                                <div class="filename" title="${previewAlt}">${previewAlt}</div>
                                 <div class="file-meta">
                                     <span class="file-type-badge ${typeClass}">${typeLabel}</span>
                                     <span>${(img.file_size / 1024).toFixed(1)} КБ</span>
@@ -820,7 +917,7 @@
                             if (changeEntries.length > 0) {
                                 html += `<div class="changes">`;
                                 for (const [key, val] of changeEntries) {
-                                    html += `<span class="change-tag">${fieldLabel(key)}: ${val}</span>`;
+                                    html += `<span class="change-tag">${escapeHtml(fieldLabel(key))}: ${displayValue(val)}</span>`;
                                 }
                                 html += `</div>`;
                             } else {
@@ -828,19 +925,21 @@
                             }
                         } else {
                             if (h.status_before || h.status_after) {
+                                const statusBefore = displayValue(h.status_before);
+                                const statusAfter = displayValue(h.status_after);
                                 html += `<div style="margin-top:var(--space-1);font-size:var(--font-size-sm);">
-                                    Статус: <span class="status-badge ${statusClass(h.status_before)}">${h.status_before || '—'}</span>
-                                    → <span class="status-badge ${statusClass(h.status_after)}">${h.status_after || '—'}</span>
+                                    Статус: <span class="status-badge ${statusClass(h.status_before)}">${statusBefore}</span>
+                                    → <span class="status-badge ${statusClass(h.status_after)}">${statusAfter}</span>
                                 </div>`;
                             }
                             if (h.comment) {
-                                html += `<div class="comment">${h.comment}</div>`;
+                                html += `<div class="comment">${escapeHtml(h.comment)}</div>`;
                             }
                             if (h.changes && typeof h.changes === 'object') {
                                 html += `<div class="changes">`;
                                 for (const [key, val] of Object.entries(h.changes)) {
                                     if (skipFields.includes(key)) continue;
-                                    html += `<span class="change-tag">${fieldLabel(key)}: ${val}</span>`;
+                                    html += `<span class="change-tag">${escapeHtml(fieldLabel(key))}: ${displayValue(val)}</span>`;
                                 }
                                 html += `</div>`;
                             }
@@ -853,7 +952,7 @@
                 document.getElementById('content').innerHTML = html;
             } catch (e) {
                 document.getElementById('content').innerHTML =
-                    `<div class="error">Ошибка загрузки: ${e.message}</div>`;
+                    `<div class="error">Ошибка загрузки: ${escapeHtml(e.message)}</div>`;
             } finally {
                 hideLoading();
             }
@@ -1069,19 +1168,21 @@
 
         // ─── Lightbox ───────────────────────────────────────────────
         function openLightbox(index) {
-            const cards = document.querySelectorAll('.image-card');
-            lbImages = [];
-            cards.forEach((card, i) => {
-                const imgEl = card.querySelector('.preview-wrap img');
-                const deleteBtn = card.querySelector('.delete-btn');
-                const imageId = deleteBtn?.getAttribute('onclick')?.match(/\d+/)?.[0] || '';
-                if (imgEl && imageId) {
-                    lbImages.push({
-                        src: `/api/images/${imageId}/download`,
-                        alt: imgEl.alt,
-                        downloadUrl: `/api/images/${imageId}/download`
-                    });
-                }
+            lbImages = (data?.images || []).map(file => {
+                const filename = file.original_filename || 'file';
+                const mime = file.mime_type || '';
+                const ext = filename.includes('.') ? '.' + filename.split('.').pop().toLowerCase() : '';
+                return {
+                    id: file.id,
+                    src: file.download_url || `/api/images/${file.id}/download`,
+                    previewSrc: file.thumbnail_url || file.download_url || `/api/images/${file.id}/download`,
+                    alt: filename,
+                    mime,
+                    ext,
+                    isImage: mime.startsWith('image/'),
+                    isPdf: mime === 'application/pdf' || ext === '.pdf',
+                    downloadUrl: file.download_url || `/api/images/${file.id}/download`
+                };
             });
 
             if (lbImages.length === 0) return;
@@ -1106,13 +1207,14 @@
             lb.onclick = (e) => {
                 if (e.target === lb) closeLightbox();
             };
-
-            lb.innerHTML = `
-                <button class="lb-close" onclick="closeLightbox()">❌</button>
-                ${lbImages.length > 1 ? `<button class="lb-nav lb-prev" onclick="navigateLightbox(-1)">❮</button>
-                <button class="lb-nav lb-next" onclick="navigateLightbox(1)">❯</button>` : ''}
-                <div class="lb-content" id="lbContent">
-                    <img src="${img.src}" alt="${img.alt}" id="lbImage"
+            const safeAlt = escapeHtml(img.alt || 'Файл');
+            const safeSrc = escapeHtml(img.src || '');
+            const safeDownloadUrl = escapeHtml(img.downloadUrl || '');
+            const contentHtml = img.isPdf ? `
+                    <iframe src="${safeSrc}" title="${safeAlt}" class="lb-pdf" loading="lazy"></iframe>
+                ` : img.isImage ? `
+                    <img src="${safeSrc}" alt="${safeAlt}" id="lbImage"
+                        onerror="showLightboxFileError()"
                         ondblclick="toggleZoom()"
                         onwheel="handleZoom(event)"
                         onmousedown="startDrag(event)"
@@ -1121,17 +1223,50 @@
                         ontouchstart="startTouchZoom(event)"
                         ontouchmove="doTouchZoom(event)"
                         ontouchend="endTouchZoom()">
+                ` : `
+                    <div class="lb-file-placeholder">
+                        <div class="lb-file-icon">📄</div>
+                        <div class="lb-file-name">${safeAlt}</div>
+                        <a href="${safeDownloadUrl}" target="_blank" rel="noopener" class="lb-file-link">Открыть файл</a>
+                    </div>
+                `;
+
+            lb.innerHTML = `
+                <button class="lb-close" onclick="closeLightbox()">❌</button>
+                ${lbImages.length > 1 ? `<button class="lb-nav lb-prev" onclick="navigateLightbox(-1)">❮</button>
+                <button class="lb-nav lb-next" onclick="navigateLightbox(1)">❯</button>` : ''}
+                <div class="lb-content" id="lbContent">
+                    ${contentHtml}
                 </div>
                 <div class="lb-counter">${lbCurrentIndex + 1} / ${lbImages.length}</div>
                 <div class="lb-toolbar">
-                    <button onclick="toggleZoom()">🔍 ${lbZoomed ? 'Сбросить' : 'Увеличить'}</button>
+                    ${img.isImage ? `<button onclick="toggleZoom()">🔍 ${lbZoomed ? 'Сбросить' : 'Увеличить'}</button>` : ''}
+                    ${img.isPdf ? `<button onclick="openCurrentFile()">↗ Открыть PDF</button>` : ''}
                     <button onclick="downloadCurrent()">⬇ Скачать</button>
                     <button onclick="toggleFullscreen()">⛶ На весь экран</button>
                 </div>
             `;
 
             document.body.appendChild(lb);
+            document.removeEventListener('keydown', lbKeyHandler);
             document.addEventListener('keydown', lbKeyHandler);
+        }
+
+        function showLightboxFileError() {
+            const content = document.getElementById('lbContent');
+            if (!content) return;
+            const img = lbImages[lbCurrentIndex];
+            const filename = escapeHtml(img?.alt || 'Файл');
+            content.innerHTML = `
+                <div class="lb-file-placeholder">
+                    <div class="lb-file-icon">⚠</div>
+                    <div class="lb-file-name">${filename}</div>
+                    <div style="color: var(--color-text-secondary); margin-bottom: var(--space-4);">
+                        Файл не найден на диске или недоступен для просмотра.
+                    </div>
+                    ${img?.downloadUrl ? `<a href="${escapeHtml(img.downloadUrl)}" target="_blank" rel="noopener" class="lb-file-link">Попробовать открыть напрямую</a>` : ''}
+                </div>
+            `;
         }
 
         function lbKeyHandler(e) {
@@ -1242,6 +1377,12 @@
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
+        }
+
+        function openCurrentFile() {
+            const img = lbImages[lbCurrentIndex];
+            if (!img) return;
+            window.open(img.src, '_blank', 'noopener');
         }
 
         function toggleFullscreen() {

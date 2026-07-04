@@ -441,7 +441,16 @@ class ImageManager:
 
     def get_absolute_path(self, relative_path: str) -> Optional[Path]:
         """Получение абсолютного пути к файлу по относительному пути из БД"""
-        full_path = self.upload_dir / relative_path
+        try:
+            base_dir = self.upload_dir.resolve()
+            full_path = (self.upload_dir / relative_path).resolve()
+            if not full_path.is_relative_to(base_dir):
+                logger.warning(f"Отклонён путь вне uploads: {relative_path}")
+                return None
+        except (OSError, RuntimeError, ValueError) as e:
+            logger.warning(f"Некорректный путь файла {relative_path}: {e}")
+            return None
+
         if full_path.exists() and full_path.is_file():
             return full_path
         return None

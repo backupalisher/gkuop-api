@@ -2,7 +2,7 @@
 Обработчик заявок и комментариев
 """
 import re
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from datetime import datetime
 from database.models import Ticket, TicketComment, TicketHistoryRecord
 from database.db_manager import DatabaseManager
@@ -79,6 +79,16 @@ class TicketProcessor:
             # Защита от перезаписи: если поле уже есть в БД, а в новом письме оно пустое — не обновляем
             if old_value and not new_value:
                 continue
+
+            if field == 'inventory_number' and old_value and new_value:
+                old_str = str(old_value).strip()
+                new_str = str(new_value).strip()
+                old_digits = re.sub(r'\D', '', old_str)
+                new_digits = re.sub(r'\D', '', new_str)
+                if self._is_serial_number(new_str) and not self._is_serial_number(old_str):
+                    continue
+                if old_digits and new_digits and len(new_digits) < 6:
+                    continue
 
             # Для immutable-полей: если значение уже есть в БД, не перезаписываем даже если пришло другое
             if field in self.IMMUTABLE_FIELDS and old_value:
@@ -349,6 +359,15 @@ class TicketProcessor:
             enriched['note'] = changed_fields['current_note']
         return enriched
 
+    @staticmethod
+    def _to_naive_datetime(value: datetime) -> Optional[datetime]:
+        """Приводит datetime к timezone-naive виду для безопасного сравнения."""
+        if not value:
+            return None
+        if value.tzinfo is not None:
+            return value.replace(tzinfo=None)
+        return value
+
     def process_existing_ticket(self, existing_ticket: Dict, email_data: Dict) -> bool:
         """Обработка существующей заявки (обновление + комментарий + снимок в историю)"""
         try:
@@ -358,10 +377,25 @@ class TicketProcessor:
             # (предотвращает дублирование полей при последовательной обработке писем)
             current_ticket = self.db.get_ticket(ticket_number) or existing_ticket
 
+            completed_at = self._to_naive_datetime(current_ticket.get('completed_at'))
+            received_date = self._to_naive_datetime(email_data.get('received_date'))
+            if (
+                current_ticket.get('status') == 'Выполнено'
+                and completed_at
+                and received_date
+                and received_date <= completed_at
+            ):
+                print(
+                    f"ℹ Заявка #{ticket_number}: письмо от {received_date} старше/равно "
+                    f"ручному выполнению {completed_at}, текущее состояние не изменяется"
+                )
+                return True
+
             # Определяем изменения относительно актуального состояния в БД
             changed_fields = self.get_changed_fields(current_ticket, email_data)
             old_status = current_ticket.get('status', '') or ''
             new_status = email_data.get('status', old_status) or ''
+            clear_completion_fields = False
 
             # Обработка серийного номера (ошибочно указанного как инвентарный)
             changed_fields = self._handle_serial_number(current_ticket, email_data, changed_fields)
@@ -385,6 +419,8 @@ class TicketProcessor:
                 else:
                     changed_fields['status'] = email_status
                     new_status = email_status
+                    if old_status_norm == 'Выполнено' and email_status != 'Выполнено':
+                        clear_completion_fields = True
 
             # Получаем последнюю запись истории для сравнения (чтобы сохранять только diff)
             last_history = self.db.get_last_history_record(ticket_number)
@@ -424,6 +460,10 @@ class TicketProcessor:
                 update_data = dict(changed_fields)
                 if old_status != new_status and 'status' not in update_data:
                     update_data['status'] = new_status
+                if clear_completion_fields:
+                    update_data['last_status'] = None
+                    update_data['completed_by'] = None
+                    update_data['completed_at'] = None
                 if update_data:
                     # Передаём received_date из письма как last_updated_date,
                     # чтобы поле хранило время последнего письма, а не момент обновления

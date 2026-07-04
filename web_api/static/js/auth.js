@@ -919,10 +919,10 @@ const UserUI = {
                                     return `
                                         <label class="permission-item">
                                             <input type="checkbox" class="perm-checkbox" 
-                                                   data-code="${p.code}" 
+                                                   data-code="${UserUI.escapeHtml(p.code)}" 
                                                    ${granted ? 'checked' : ''}>
-                                            <span class="perm-name">${p.name}</span>
-                                            <span class="perm-desc">${p.description || ''}</span>
+                                            <span class="perm-name">${UserUI.escapeHtml(p.name)}</span>
+                                            <span class="perm-desc">${UserUI.escapeHtml(p.description || '')}</span>
                                         </label>
                                     `;
                                 }).join('')}
@@ -1294,7 +1294,13 @@ async function handleLoginV2(event) {
             if (indicator) {
                 indicator.style.display = 'flex';
                 const nameEl = indicator.querySelector('.auth-indicator');
-                if (nameEl) nameEl.innerHTML = '<span class="auth-dot"></span>' + (result.user?.username || login);
+                if (nameEl) {
+                    nameEl.textContent = '';
+                    const dot = document.createElement('span');
+                    dot.className = 'auth-dot';
+                    nameEl.appendChild(dot);
+                    nameEl.appendChild(document.createTextNode(result.user?.username || login));
+                }
             }
             // Сохраняем также под старым ключом для совместимости с ticket_detail.html
             try {

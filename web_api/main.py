@@ -7,7 +7,6 @@ import re
 import json
 import hashlib
 import logging
-import asyncio
 import threading
 from pathlib import Path
 from datetime import datetime, date
@@ -27,23 +26,18 @@ from fastapi.responses import HTMLResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from starlette.middleware.base import BaseHTTPMiddleware
 from dotenv import load_dotenv
 
 from psycopg2.sql import SQL, Identifier
 
 from database.db_manager import DatabaseManager
-from database.models import TicketImage, UserComment
+from database.models import UserComment
 from config.settings import load_config
 from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from services.image_manager import ImageManager, ImageValidationError
-from services.image_compressor import (
-    ImageCompressor, CompressionConfig as CompressorConfig,
-    CompressionPreset
-)
 
 # Импорт модуля аутентификации и авторизации
 from auth.middleware import AuthMiddleware, require_permission, get_current_user
@@ -61,8 +55,6 @@ from utils.crash_monitor import (
     mark_manual_stop,
     get_crash_monitor_status,
     list_crash_reports,
-    save_crash_report,
-    build_crash_report,
 )
 
 load_dotenv()
@@ -85,6 +77,45 @@ _rebuild_progress = {
     "status": "idle",  # idle | running | completed | error
     "result": None,
 }
+
+EDITABLE_TICKET_FIELDS = {
+    'inventory_number', 'printer_model', 'office', 'cabinet', 'component',
+    'status', 'priority', 'current_note', 'required_action', 'cause',
+    'fault_description', 'work_done', 'tech_conclusion', 'soglasovano_line',
+    'department',
+}
+
+HISTORY_EXCLUDED_FIELDS = {
+    'assigned_to', 'contact_phone', 'author_name', 'position', 'subject',
+}
+
+
+def _error_response(message: str, status_code: int) -> JSONResponse:
+    """Единый JSON-ответ для ошибок доступа и валидации."""
+    return JSONResponse({"error": message}, status_code=status_code)
+
+
+def _user_can_access_ticket(user: Any, ticket: dict) -> bool:
+    """Проверяет доступ пользователя к заявке по офису."""
+    if not user:
+        return False
+    if user.role == UserRole.ADMIN:
+        return True
+    ticket_office = (ticket.get('office') or '').strip()
+    if not ticket_office:
+        return True
+    user_offices = auth_db.get_user_offices(user.username) if auth_db else []
+    return ticket_office in user_offices
+
+
+def _require_ticket_access(request: Request, ticket: dict) -> Optional[JSONResponse]:
+    """Возвращает ошибку доступа к заявке или None, если доступ разрешён."""
+    current_user = get_current_user(request)
+    if not current_user:
+        return _error_response("Требуется авторизация", 401)
+    if not _user_can_access_ticket(current_user, ticket):
+        return _error_response("Недостаточно прав для данной заявки", 403)
+    return None
 
 
 def compute_static_version() -> str:
@@ -294,7 +325,7 @@ async def global_exception_handler(request: Request, exc: Exception):
     logger.error(f"Unhandled exception: {exc}", exc_info=True)
     return CustomJSONResponse(
         status_code=500,
-        content={"error": f"Внутренняя ошибка сервера: {str(exc)}", "detail": str(exc)},
+        content={"error": "Внутренняя ошибка сервера"},
     )
 
 
@@ -341,22 +372,11 @@ app.include_router(auth_router)
 @app.middleware("http")
 async def track_request_middleware(request: Request, call_next):
     """Middleware для записи информации о текущем запросе в crash_monitor."""
-    # Получаем тело запроса (только для не-GET запросов)
-    body_preview = None
-    if request.method in ("POST", "PUT", "PATCH"):
-        try:
-            body = await request.body()
-            if body:
-                body_str = body.decode("utf-8", errors="replace")
-                body_preview = body_str[:500]  # Ограничиваем до 500 символов
-        except Exception:
-            pass
-
     set_last_request(
         method=request.method,
         path=str(request.url.path),
         client_ip=request.client.host if request.client else None,
-        body_preview=body_preview,
+        body_preview=None,
     )
 
     response = await call_next(request)
@@ -367,6 +387,7 @@ async def track_request_middleware(request: Request, call_next):
 
 
 @app.get("/api/tickets")
+@require_permission(Permission.VIEW_TICKETS)
 async def api_get_tickets(
     request: Request,
     page: int = Query(1, ge=1),
@@ -543,8 +564,9 @@ async def api_get_tickets(
 
         # Общее количество
         count_query = f"SELECT COUNT(*) as total FROM tickets t {where_sql}"
-        db.cursor.execute(count_query, params)
-        total = db.cursor.fetchone()["total"]
+        with db._lock:
+            db.cursor.execute(count_query, params)
+            total = db.cursor.fetchone()["total"]
 
         # Данные
         offset = (page - 1) * per_page
@@ -579,8 +601,9 @@ async def api_get_tickets(
         """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
         )
-        db.cursor.execute(data_query, params + [per_page, offset])
-        rows = db.cursor.fetchall()
+        with db._lock:
+            db.cursor.execute(data_query, params + [per_page, offset])
+            rows = db.cursor.fetchall()
 
         # Сортировка результатов по уровню приоритета:
         # Уровень 1 (ticket_number) → Уровень 2 (inventory_number) → Уровень 3 (текстовые поля)
@@ -617,6 +640,7 @@ async def api_get_tickets(
 
 
 @app.get("/api/offices")
+@require_permission(Permission.VIEW_TICKETS)
 async def api_get_offices(request: Request):
     """Получить список уникальных адресов офисов из заявок."""
     if not db:
@@ -629,6 +653,7 @@ async def api_get_offices(request: Request):
 
 
 @app.get("/api/tickets/{ticket_number}")
+@require_permission(Permission.VIEW_TICKET_DETAIL)
 async def api_get_ticket(ticket_number: str, request: Request = None):
     """Получить детали заявки, историю и изображения"""
     if not db:
@@ -640,19 +665,13 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
 
         # ─── Проверка прав доступа к офису заявки ───────────────
-        current_user = get_current_user(request) if request else None
-        if current_user and current_user.role != UserRole.ADMIN:
-            user_offices = auth_db.get_user_offices(current_user.username)
-            ticket_office = ticket.get('office', '')
-            if ticket_office and ticket_office not in user_offices:
-                return JSONResponse(
-                    {"error": "Недостаточно прав для просмотра данной заявки"},
-                    status_code=403
-                )
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         history = db.get_ticket_history(ticket_number)
         # Фильтруем уже сохранённые changed_fields — удаляем поля, исключённые из отображения
-        _history_excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
+        _history_excluded = HISTORY_EXCLUDED_FIELDS
         # Метки полей, которые могут встречаться в comment_text
         _excluded_labels = ['Назначена', 'Телефон', 'Автор', 'Должность', 'Тема']
         for h in history:
@@ -689,18 +708,19 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
         completed_at = None
         if ticket.get('status') == 'Выполнено':
             try:
-                db.cursor.execute("""
-                    SELECT th.received_date
-                    FROM ticket_history th
-                    WHERE th.ticket_number = %s
-                      AND (
-                          th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
-                          OR th.status = 'Выполнено'
-                      )
-                    ORDER BY th.received_date DESC
-                    LIMIT 1
-                """, (ticket_number,))
-                row = db.cursor.fetchone()
+                with db._lock:
+                    db.cursor.execute("""
+                        SELECT th.received_date
+                        FROM ticket_history th
+                        WHERE th.ticket_number = %s
+                          AND (
+                              th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                              OR th.status = 'Выполнено'
+                          )
+                        ORDER BY th.received_date DESC
+                        LIMIT 1
+                    """, (ticket_number,))
+                    row = db.cursor.fetchone()
                 if row:
                     completed_at = row['received_date'].isoformat() if hasattr(row['received_date'], 'isoformat') else str(row['received_date'])
             except Exception:
@@ -740,6 +760,9 @@ async def api_update_ticket(ticket_number: str, request: Request):
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
 
         # 2. Получаем данные из тела запроса
         try:
@@ -752,6 +775,8 @@ async def api_update_ticket(ticket_number: str, request: Request):
         # 3. Вычисляем diff между актуальным состоянием и новыми данными
         changed_fields = {}
         for field, new_value in body.items():
+            if field not in EDITABLE_TICKET_FIELDS:
+                continue
             old_value = existing_ticket.get(field, '') or ''
             new_str = str(new_value).strip() if new_value else ''
             old_str = str(old_value).strip() if old_value else ''
@@ -762,8 +787,7 @@ async def api_update_ticket(ticket_number: str, request: Request):
             return {"status": "ok", "message": "Нет изменений", "ticket": existing_ticket}
 
         # Исключаем поля, которые не должны попадать в историю изменений
-        _history_excluded = {'assigned_to', 'contact_phone', 'author_name', 'position', 'subject'}
-        changed_fields = {k: v for k, v in changed_fields.items() if k not in _history_excluded}
+        changed_fields = {k: v for k, v in changed_fields.items() if k not in HISTORY_EXCLUDED_FIELDS}
 
         if not changed_fields:
             return {"status": "ok", "message": "Нет изменений", "ticket": existing_ticket}
@@ -828,22 +852,26 @@ async def api_complete_ticket(ticket_number: str, request: Request):
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
 
         # ─── Защита от повторного выполнения ────────────────────────────
         if existing_ticket.get('status') == 'Выполнено':
             # Проверяем, есть ли completed_at в истории
             _already_completed = False
             try:
-                db.cursor.execute("""
-                    SELECT 1 FROM ticket_history th
-                    WHERE th.ticket_number = %s
-                      AND (
-                          th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
-                          OR th.status = 'Выполнено'
-                      )
-                    LIMIT 1
-                """, (ticket_number,))
-                _already_completed = db.cursor.fetchone() is not None
+                with db._lock:
+                    db.cursor.execute("""
+                        SELECT 1 FROM ticket_history th
+                        WHERE th.ticket_number = %s
+                          AND (
+                              th.changed_fields::jsonb @> '{"status": "Выполнено"}'::jsonb
+                              OR th.status = 'Выполнено'
+                          )
+                        LIMIT 1
+                    """, (ticket_number,))
+                    _already_completed = db.cursor.fetchone() is not None
             except Exception:
                 pass
             if _already_completed:
@@ -929,7 +957,7 @@ async def api_complete_ticket(ticket_number: str, request: Request):
                     if hasattr(file, 'read') and file.filename:
                         file_bytes = await file.read()
                         mime_type = file.content_type or 'image/jpeg'
-                        ticket_image = image_manager.save_image(
+                        ticket_image = image_manager.save_file(
                             ticket_number=ticket_number,
                             file_bytes=file_bytes,
                             original_filename=file.filename,
@@ -955,6 +983,7 @@ async def api_complete_ticket(ticket_number: str, request: Request):
 
 
 @app.post("/api/tickets/{ticket_number}/uncomplete")
+@require_permission(Permission.COMPLETE_TICKETS)
 async def api_uncomplete_ticket(ticket_number: str, request: Request):
     """Отменить выполнение заявки (только для администраторов).
     Восстанавливает предыдущий статус из last_status, очищает completed_at и completed_by.
@@ -974,6 +1003,9 @@ async def api_uncomplete_ticket(ticket_number: str, request: Request):
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
 
         # Проверяем, что заявка выполнена
         if existing_ticket.get('status') != 'Выполнено':
@@ -992,15 +1024,16 @@ async def api_uncomplete_ticket(ticket_number: str, request: Request):
         username = current_user.username if current_user else 'unknown'
 
         # Обновляем заявку: восстанавливаем статус, очищаем completed_at и completed_by
-        db.cursor.execute("""
-            UPDATE tickets
-            SET status = %s,
-                last_status = NULL,
-                completed_by = NULL,
-                completed_at = NULL
-            WHERE ticket_number = %s
-        """, (previous_status, ticket_number))
-        db.connection.commit()
+        with db._lock:
+            db.cursor.execute("""
+                UPDATE tickets
+                SET status = %s,
+                    last_status = NULL,
+                    completed_by = NULL,
+                    completed_at = NULL
+                WHERE ticket_number = %s
+            """, (previous_status, ticket_number))
+            db.connection.commit()
 
         # Создаём запись в истории с типом uncompleted
         from database.models import TicketHistoryRecord
@@ -1064,12 +1097,16 @@ async def api_archive_ticket(ticket_number: str, request: Request):
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
 
-        db.cursor.execute(
-            "UPDATE tickets SET is_archived = TRUE, status = 'В архив' WHERE ticket_number = %s",
-            (ticket_number,)
-        )
-        db.connection.commit()
+        with db._lock:
+            db.cursor.execute(
+                "UPDATE tickets SET is_archived = TRUE, status = 'В архив' WHERE ticket_number = %s",
+                (ticket_number,)
+            )
+            db.connection.commit()
 
         updated_ticket = db.get_ticket(ticket_number)
         return {"status": "ok", "message": "Заявка архивирована", "ticket": updated_ticket}
@@ -1088,6 +1125,9 @@ async def api_restore_ticket(ticket_number: str, request: Request):
         existing_ticket = db.get_ticket(ticket_number)
         if not existing_ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
 
         # При восстановлении сбрасываем флаг архива и убираем статус "В архив",
         # но сохраняем другие статусы (например, "Выполнено")
@@ -1095,11 +1135,12 @@ async def api_restore_ticket(ticket_number: str, request: Request):
         if new_status == 'В архив':
             new_status = None
 
-        db.cursor.execute(
-            "UPDATE tickets SET is_archived = FALSE, status = %s WHERE ticket_number = %s",
-            (new_status, ticket_number)
-        )
-        db.connection.commit()
+        with db._lock:
+            db.cursor.execute(
+                "UPDATE tickets SET is_archived = FALSE, status = %s WHERE ticket_number = %s",
+                (new_status, ticket_number)
+            )
+            db.connection.commit()
 
         updated_ticket = db.get_ticket(ticket_number)
         return {"status": "ok", "message": "Заявка восстановлена из архива", "ticket": updated_ticket}
@@ -1123,6 +1164,9 @@ async def api_add_task(ticket_number: str, request: Request):
                 {"error": "Заявка не найдена", "is_task": False},
                 status_code=404,
             )
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
         # Проверяем, не добавлена ли уже заявка (дубликат)
         already_task = db.is_task(ticket_number)
         if already_task:
@@ -1155,6 +1199,15 @@ async def api_remove_task(ticket_number: str, request: Request):
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
     try:
+        existing_ticket = db.get_ticket(ticket_number)
+        if not existing_ticket:
+            return JSONResponse(
+                {"error": "Заявка не найдена", "is_task": True},
+                status_code=404,
+            )
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
         if db.remove_task(ticket_number):
             return {
                 "status": "ok",
@@ -1170,11 +1223,18 @@ async def api_remove_task(ticket_number: str, request: Request):
 
 
 @app.get("/api/tickets/{ticket_number}/task")
-async def api_check_task(ticket_number: str):
+@require_permission(Permission.VIEW_TICKET_DETAIL)
+async def api_check_task(ticket_number: str, request: Request):
     """Проверить, находится ли заявка в списке задач"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
     try:
+        existing_ticket = db.get_ticket(ticket_number)
+        if not existing_ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, existing_ticket)
+        if access_error:
+            return access_error
         is_task = db.is_task(ticket_number)
         return {"is_task": is_task}
     except Exception as e:
@@ -1255,6 +1315,7 @@ async def api_add_comment(ticket_number: str, request: Request):
 
 
 @app.get("/api/tasks")
+@require_permission(Permission.VIEW_TICKETS)
 async def api_get_tasks(request: Request):
     """Получить список номеров заявок в задачах"""
     if not db:
@@ -1283,6 +1344,7 @@ async def api_get_tasks(request: Request):
 
 
 @app.get("/api/tasks/tickets")
+@require_permission(Permission.VIEW_TICKETS)
 async def api_get_task_tickets(
     request: Request,
     page: int = Query(1, ge=1),
@@ -1363,8 +1425,9 @@ async def api_get_task_tickets(
             INNER JOIN ticket_tasks tt ON t.ticket_number = tt.ticket_number
             WHERE {where_sql}
         """
-        db.cursor.execute(count_query, params)
-        total = db.cursor.fetchone()["total"]
+        with db._lock:
+            db.cursor.execute(count_query, params)
+            total = db.cursor.fetchone()["total"]
 
         offset = (page - 1) * per_page
         sort_column = Identifier(sort_by)
@@ -1397,8 +1460,9 @@ async def api_get_task_tickets(
         """) + SQL(f"WHERE {where_sql}") + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
         )
-        db.cursor.execute(query, params + [per_page, offset])
-        rows = db.cursor.fetchall()
+        with db._lock:
+            db.cursor.execute(query, params + [per_page, offset])
+            rows = db.cursor.fetchall()
 
         # Применяем сокращение адресов офисов для отображения в списке
         tickets_data = []
@@ -1422,7 +1486,8 @@ async def api_get_task_tickets(
 
 
 @app.post("/api/tickets/{ticket_number}/images")
-async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(...)):
+@require_permission(Permission.UPLOAD_IMAGES)
+async def api_upload_images(ticket_number: str, request: Request, files: List[UploadFile] = File(...)):
     """Загрузить одно или несколько изображений для заявки"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -1434,6 +1499,9 @@ async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(.
         ticket = db.get_ticket(ticket_number)
         if not ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         uploaded = []
         errors = []
@@ -1505,7 +1573,8 @@ async def api_upload_images(ticket_number: str, files: List[UploadFile] = File(.
 
 
 @app.get("/api/tickets/{ticket_number}/images")
-async def api_get_ticket_images(ticket_number: str):
+@require_permission(Permission.VIEW_TICKET_DETAIL)
+async def api_get_ticket_images(ticket_number: str, request: Request):
     """Получить список изображений заявки"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -1514,6 +1583,9 @@ async def api_get_ticket_images(ticket_number: str):
         ticket = db.get_ticket(ticket_number)
         if not ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         images = db.get_ticket_images(ticket_number)
         # Добавляем URL для скачивания и thumbnail
@@ -1528,6 +1600,7 @@ async def api_get_ticket_images(ticket_number: str):
 
 
 @app.get("/api/images/{image_id}/download")
+@require_permission(Permission.VIEW_TICKET_DETAIL)
 async def api_download_image(image_id: int, request: Request):
     """Скачать оригинал файла (изображение или документ)"""
     if not db:
@@ -1540,6 +1613,12 @@ async def api_download_image(image_id: int, request: Request):
 
         if image_record.get('is_deleted'):
             return JSONResponse({"error": "Файл удалён"}, status_code=410)
+        ticket = db.get_ticket(image_record['ticket_number'])
+        if not ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         file_bytes = image_manager.get_file_bytes(image_record['file_path'])
         if file_bytes is None:
@@ -1559,9 +1638,9 @@ async def api_download_image(image_id: int, request: Request):
             # Не-ASCII — кодируем через percent-encoding для RFC 5987
             ascii_filename = 'file' + ext
 
-        # Для изображений — inline, для документов — attachment
+        # Изображения и PDF должны открываться в браузере для preview/lightbox.
         filename_part = f'filename="{ascii_filename}"; filename*=UTF-8\'\'{quote(filename)}'
-        disposition_type = 'inline' if ext in ('.jpg', '.jpeg', '.png', '.gif') else 'attachment'
+        disposition_type = 'inline' if ext in ('.jpg', '.jpeg', '.png', '.gif', '.pdf') else 'attachment'
         disposition = f'{disposition_type}; {filename_part}'
 
         # ETag для кэширования
@@ -1590,6 +1669,7 @@ async def api_download_image(image_id: int, request: Request):
 
 
 @app.get("/api/images/{image_id}/thumbnail")
+@require_permission(Permission.VIEW_TICKET_DETAIL)
 async def api_get_thumbnail(image_id: int, request: Request):
     """Получить thumbnail/preview файла"""
     if not db:
@@ -1602,6 +1682,12 @@ async def api_get_thumbnail(image_id: int, request: Request):
 
         if image_record.get('is_deleted'):
             return JSONResponse({"error": "Файл удалён"}, status_code=410)
+        ticket = db.get_ticket(image_record['ticket_number'])
+        if not ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         thumb_path = image_record.get('thumbnail_path')
         if not thumb_path:
@@ -1658,6 +1744,12 @@ async def api_delete_image(image_id: int, request: Request):
 
         if image_record.get('is_deleted'):
             return JSONResponse({"error": "Изображение уже удалено"}, status_code=410)
+        ticket = db.get_ticket(image_record['ticket_number'])
+        if not ticket:
+            return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        access_error = _require_ticket_access(request, ticket)
+        if access_error:
+            return access_error
 
         # Мягкое удаление в БД
         if db.soft_delete_image(image_id):
@@ -1672,7 +1764,8 @@ async def api_delete_image(image_id: int, request: Request):
 
 
 @app.get("/api/statistics")
-async def api_get_statistics():
+@require_permission(Permission.VIEW_TICKETS)
+async def api_get_statistics(request: Request):
     """Получить статистику"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
@@ -1685,16 +1778,18 @@ async def api_get_statistics():
 
 
 @app.get("/api/statuses")
-async def api_get_statuses():
+@require_permission(Permission.VIEW_TICKETS)
+async def api_get_statuses(request: Request):
     """Получить список уникальных статусов"""
     if not db:
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
 
     try:
-        db.cursor.execute(
-            "SELECT DISTINCT status FROM tickets WHERE status IS NOT NULL ORDER BY status"
-        )
-        rows = db.cursor.fetchall()
+        with db._lock:
+            db.cursor.execute(
+                "SELECT DISTINCT status FROM tickets WHERE status IS NOT NULL ORDER BY status"
+            )
+            rows = db.cursor.fetchall()
         return {"statuses": [r["status"] for r in rows]}
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
@@ -1702,18 +1797,24 @@ async def api_get_statuses():
 
 # ─── Фоновая перестройка БД с прогрессом ──────────────────────────
 
-def _run_rebuild_background():
+def _run_rebuild_background(since_date_override: Optional[datetime] = None):
     """Фоновая задача перестройки БД (выполняется в отдельном потоке)"""
     global _rebuild_progress
     try:
         config = load_config()
 
         # --- Проверяем checkpoint для инкрементального обновления ---
-        checkpoint = db.get_checkpoint()
-        use_incremental = checkpoint is not None
+        checkpoint = None if since_date_override else db.get_checkpoint()
+        use_incremental = since_date_override is not None or checkpoint is not None
         since_date = None
 
-        if use_incremental:
+        if since_date_override is not None:
+            since_date = since_date_override
+            logger.info(f"Инкрементальное обновление с указанной даты: {since_date}")
+            _rebuild_progress["message"] = (
+                f"Обновление с {since_date.strftime('%d.%m.%Y')}…"
+            )
+        elif use_incremental:
             since_date = checkpoint['checkpoint_date']
             logger.info(f"Инкрементальное обновление: checkpoint от {since_date}, "
                         f"ранее обработано {checkpoint['processed_count']} писем")
@@ -1723,21 +1824,36 @@ def _run_rebuild_background():
         else:
             _rebuild_progress["message"] = "Полная перестройка БД…"
 
-        # Шаг 1: Сохраняем пользовательские статусы
+        # Шаг 1: Сохраняем пользовательские статусы только для полной перестройки.
+        # В инкрементальном режиме восстановление старого статуса после обработки
+        # новых писем откатывает актуальный статус из письма.
         saved_statuses = {}
-        try:
-            db.cursor.execute(
-                "SELECT ticket_number, status, is_archived, is_active FROM tickets"
-            )
-            for row in db.cursor.fetchall():
-                saved_statuses[row['ticket_number']] = {
-                    'status': row['status'],
-                    'is_archived': row['is_archived'],
-                    'is_active': row['is_active'],
-                }
-            logger.info(f"Сохранено статусов для {len(saved_statuses)} существующих заявок")
-        except Exception:
-            pass
+        if not use_incremental:
+            try:
+                with db._lock:
+                    db.cursor.execute(
+                        """SELECT ticket_number, status, is_archived, is_active,
+                                  last_status, completed_by, completed_at
+                           FROM tickets"""
+                    )
+                    saved_rows = db.cursor.fetchall()
+                for row in saved_rows:
+                    saved_statuses[row['ticket_number']] = {
+                        'status': row['status'],
+                        'is_archived': row['is_archived'],
+                        'is_active': row['is_active'],
+                        'last_status': row.get('last_status'),
+                        'completed_by': row.get('completed_by'),
+                        'completed_at': row.get('completed_at'),
+                    }
+                logger.info(f"Сохранено статусов для {len(saved_statuses)} существующих заявок")
+            except Exception:
+                try:
+                    db.connection.rollback()
+                except Exception:
+                    pass
+        else:
+            logger.info("Инкрементальный режим: восстановление старых статусов отключено")
 
         # Шаг 2: Очистка БД (только для полной перестройки)
         if not use_incremental:
@@ -1837,22 +1953,41 @@ def _run_rebuild_background():
 
         email_client.close()
 
-        # Шаг 4: Восстанавливаем статусы
+        # Шаг 4: Восстанавливаем ручные статусы только после полной перестройки.
+        # Ручное "Выполнено" сохраняется, только если после него не было новых писем.
         restored_count = 0
-        for ticket_number, saved in saved_statuses.items():
-            updates = {}
-            if saved.get('status'):
-                updates['status'] = saved['status']
-            if saved.get('is_archived') is not None:
-                updates['is_archived'] = saved['is_archived']
-            if saved.get('is_active') is not None:
-                updates['is_active'] = saved['is_active']
-            if updates:
-                if db.ticket_exists(ticket_number):
+        if not use_incremental:
+            for ticket_number, saved in saved_statuses.items():
+                current_ticket = db.get_ticket(ticket_number)
+                if not current_ticket:
+                    continue
+
+                updates = {}
+                completed_at = saved.get('completed_at')
+                last_email_date = current_ticket.get('last_updated_date')
+
+                if (
+                    saved.get('status') == 'Выполнено'
+                    and completed_at
+                    and (not last_email_date or last_email_date <= completed_at)
+                ):
+                    updates['status'] = 'Выполнено'
+                    updates['last_status'] = saved.get('last_status')
+                    updates['completed_by'] = saved.get('completed_by')
+                    updates['completed_at'] = completed_at
+
+                if saved.get('is_archived') is not None:
+                    updates['is_archived'] = saved['is_archived']
+                if saved.get('is_active') is not None:
+                    updates['is_active'] = saved['is_active']
+
+                if updates:
                     db.update_ticket(ticket_number, updates)
                     restored_count += 1
 
-        logger.info(f"Восстановлено статусов для {restored_count} заявок")
+            logger.info(f"Восстановлено ручных статусов для {restored_count} заявок")
+        else:
+            logger.info("Инкрементальный режим: восстановление статусов пропущено")
 
         # Шаг 5: Сохраняем checkpoint (только при успешной обработке)
         try:
@@ -1886,7 +2021,8 @@ def _run_rebuild_background():
 
 
 @app.post("/api/rebuild/start")
-async def api_rebuild_start():
+@require_permission(Permission.REBUILD_DATA)
+async def api_rebuild_start(request: Request):
     """Запустить фоновую перестройку БД с отслеживанием прогресса"""
     global _rebuild_progress
     if not db:
@@ -1895,153 +2031,71 @@ async def api_rebuild_start():
     if _rebuild_progress["running"]:
         return JSONResponse({"error": "Перестройка уже выполняется"}, status_code=409)
 
+    since_date = None
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+
+    raw_since_date = (body.get("since_date") or "").strip() if isinstance(body, dict) else ""
+    if raw_since_date:
+        try:
+            since_date = datetime.strptime(raw_since_date, "%Y-%m-%d")
+        except ValueError:
+            return JSONResponse(
+                {"error": "Некорректная дата. Используйте формат YYYY-MM-DD."},
+                status_code=400,
+            )
+
+        if since_date.date() > datetime.now().date():
+            return JSONResponse(
+                {"error": "Дата начала обновления не может быть в будущем."},
+                status_code=400,
+            )
+
     # Сбрасываем прогресс
     _rebuild_progress.update({
         "running": True,
         "total": 0,
         "processed": 0,
         "errors": 0,
-        "message": "Подготовка к обработке…",
+        "message": (
+            f"Подготовка к обработке с {since_date.strftime('%d.%m.%Y')}…"
+            if since_date else
+            "Подготовка к обработке…"
+        ),
         "status": "running",
         "result": None,
+        "since_date": raw_since_date or None,
     })
 
     # Запускаем в отдельном потоке, чтобы не блокировать event loop
-    thread = threading.Thread(target=_run_rebuild_background, daemon=True)
+    thread = threading.Thread(
+        target=_run_rebuild_background,
+        args=(since_date,),
+        daemon=True,
+    )
     thread.start()
 
-    return {"status": "started", "message": "Перестройка запущена"}
+    return {
+        "status": "started",
+        "message": "Перестройка запущена",
+        "since_date": raw_since_date or None,
+    }
 
 
 @app.get("/api/rebuild/status")
-async def api_rebuild_status():
+@require_permission(Permission.REBUILD_DATA)
+async def api_rebuild_status(request: Request):
     """Получить текущий статус фоновой перестройки БД"""
     return dict(_rebuild_progress)
 
 
 @app.post("/api/rebuild")
-async def api_rebuild():
-    """Обновление данных: переобработка всех писем из почты с сохранением пользовательских статусов"""
-    if not db:
-        return JSONResponse({"error": "БД не подключена"}, status_code=503)
-
-    try:
-        config = load_config()
-
-        # Шаг 1: Сохраняем пользовательские статусы и флаги существующих заявок
-        # (статусы «Выполнено», «В архив» и т.д., установленные вручную)
-        saved_statuses = {}
-        try:
-            db.cursor.execute(
-                "SELECT ticket_number, status, is_archived, is_active FROM tickets"
-            )
-            for row in db.cursor.fetchall():
-                saved_statuses[row['ticket_number']] = {
-                    'status': row['status'],
-                    'is_archived': row['is_archived'],
-                    'is_active': row['is_active'],
-                }
-            logger.info(f"Сохранено статусов для {len(saved_statuses)} существующих заявок")
-        except Exception:
-            # Таблицы может ещё не существовать — это нормально для первого запуска
-            pass
-
-        # Шаг 2: Комплексная очистка БД через full_cleanup()
-        cleanup_result = db.full_cleanup()
-        if not cleanup_result['success']:
-            return JSONResponse({
-                "error": "Не удалось выполнить очистку БД",
-                "cleanup_result": cleanup_result
-            }, status_code=500)
-
-        # Инициализируем компоненты для обработки писем
-        email_client = EmailClient(
-            imap_server=config['email'].imap_server,
-            email=config['email'].email,
-            password=config['email'].password,
-            port=config['email'].port
-        )
-        if not email_client.connect():
-            return JSONResponse({"error": "Не удалось подключиться к почте"}, status_code=500)
-
-        if not email_client.select_folder(config['email'].folder):
-            email_client.close()
-            return JSONResponse({"error": "Не удалось выбрать папку"}, status_code=500)
-
-        email_parser = EmailParser(
-            config['parser'].patterns,
-            subject_filters=config['parser'].subject_filters
-        )
-        ticket_processor = TicketProcessor(db)
-
-        # Поиск писем
-        email_ids = email_client.search_emails(
-            subject_filters=config['parser'].subject_filters,
-            from_filter=config['parser'].from_filter
-        )
-
-        if not email_ids:
-            email_client.close()
-            return {
-                "status": "ok",
-                "message": "Нет писем для обработки",
-                "processed": 0,
-                "cleanup_result": cleanup_result
-            }
-
-        # Обрабатываем письма
-        processed = 0
-        errors = 0
-        for email_id in email_ids:
-            email_message = email_client.fetch_email(email_id)
-            if not email_message:
-                errors += 1
-                continue
-
-            email_data = email_parser.parse_email(email_message)
-            if not email_data:
-                continue
-
-            if ticket_processor.process_email(email_data):
-                processed += 1
-            else:
-                errors += 1
-
-        email_client.close()
-
-        # Шаг 3: Восстанавливаем сохранённые пользовательские статусы
-        restored_count = 0
-        for ticket_number, saved in saved_statuses.items():
-            updates = {}
-            if saved.get('status'):
-                updates['status'] = saved['status']
-            if saved.get('is_archived') is not None:
-                updates['is_archived'] = saved['is_archived']
-            if saved.get('is_active') is not None:
-                updates['is_active'] = saved['is_active']
-
-            if updates:
-                # Проверяем, что заявка существует после переобработки
-                if db.ticket_exists(ticket_number):
-                    db.update_ticket(ticket_number, updates)
-                    restored_count += 1
-
-        logger.info(f"Восстановлено статусов для {restored_count} заявок")
-
-        # Шаг 4: Верификация целостности после загрузки
-        integrity_result = db.verify_data_integrity()
-
-        return {
-            "status": "ok",
-            "message": f"Обработано: {processed}, Ошибок: {errors}",
-            "processed": processed,
-            "errors": errors,
-            "cleanup_result": cleanup_result,
-            "integrity_result": integrity_result,
-            "statuses_restored": restored_count
-        }
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+@require_permission(Permission.REBUILD_DATA)
+async def api_rebuild(request: Request):
+    """Совместимость со старым API: запускает безопасный фоновый rebuild."""
+    return await api_rebuild_start(request)
 
 
 # ─── HTML эндпоинты ────────────────────────────────────────────────
@@ -2082,12 +2136,12 @@ async def ticket_detail(request: Request, ticket_number: str):
 @app.get("/api/health")
 async def api_health():
     """Health-check endpoint для супервизора."""
-    status = get_crash_monitor_status()
     db_ok = db is not None and hasattr(db, 'connection') and db.connection is not None
     try:
         if db_ok:
-            db.cursor.execute("SELECT 1")
-            db_ok = db.cursor.fetchone() is not None
+            with db._lock:
+                db.cursor.execute("SELECT 1")
+                db_ok = db.cursor.fetchone() is not None
     except Exception:
         db_ok = False
 
@@ -2096,19 +2150,20 @@ async def api_health():
         "service": "gkuop-web",
         "timestamp": datetime.utcnow().isoformat(),
         "database": "connected" if db_ok else "disconnected",
-        "monitor": status,
     }
 
 
 @app.get("/api/crash-reports")
-async def api_crash_reports(limit: int = Query(10, ge=1, le=100)):
+@require_permission(Permission.VIEW_LOGS)
+async def api_crash_reports(request: Request, limit: int = Query(10, ge=1, le=100)):
     """Получить список последних crash-отчётов."""
     reports = list_crash_reports(limit=limit)
     return {"crash_reports": reports, "total": len(reports)}
 
 
 @app.get("/api/crash-reports/{crash_id}")
-async def api_crash_report_detail(crash_id: str):
+@require_permission(Permission.VIEW_LOGS)
+async def api_crash_report_detail(crash_id: str, request: Request):
     """Получить детальный crash-отчёт по ID."""
     from utils.crash_monitor import CRASH_LOG_DIR
     import json
@@ -2125,7 +2180,8 @@ async def api_crash_report_detail(crash_id: str):
 
 
 @app.get("/api/monitor/status")
-async def api_monitor_status():
+@require_permission(Permission.VIEW_LOGS)
+async def api_monitor_status(request: Request):
     """Получить полный статус системы мониторинга."""
     return get_crash_monitor_status()
 

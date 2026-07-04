@@ -3,10 +3,11 @@
 """
 import re
 import hashlib
+import html
 from email.header import decode_header
 from email.message import Message
 from datetime import datetime
-from typing import Dict, Optional
+from typing import Dict, List, Optional
 from bs4 import BeautifulSoup
 
 
@@ -62,7 +63,7 @@ class EmailParser:
         # Если есть HTML, но нет текста, извлекаем текст из HTML
         if body_html and not body_text:
             soup = BeautifulSoup(body_html, 'html.parser')
-            body_text = soup.get_text()
+            body_text = soup.get_text(separator='\n')
 
         return {
             'text': body_text,
@@ -155,6 +156,106 @@ class EmailParser:
         # Если не подходит ни под одно правило — возвращаем как есть
         return value, None, False
 
+    @staticmethod
+    def _clean_inline_text(value: str) -> str:
+        """Нормализация пробелов внутри одной извлечённой строки."""
+        value = html.unescape(value or '').replace('\xa0', ' ')
+        return re.sub(r'\s+', ' ', value).strip()
+
+    @classmethod
+    def _normalize_soglasovano_source(cls, body: str) -> str:
+        """Подготовка HTML/plain text тела письма для поиска согласованных позиций."""
+        if not body:
+            return ''
+
+        normalized = html.unescape(body).replace('\xa0', ' ')
+        normalized = re.sub(r'<\s*br\s*/?\s*>', '\n', normalized, flags=re.IGNORECASE)
+        normalized = re.sub(r'</\s*(?:div|p|li|tr)\s*>', '\n', normalized, flags=re.IGNORECASE)
+
+        if re.search(r'<[^>]+>', normalized):
+            normalized = BeautifulSoup(normalized, 'html.parser').get_text(separator='\n')
+
+        normalized = normalized.replace('\r\n', '\n').replace('\r', '\n')
+        normalized = re.sub(r'[ \t]+', ' ', normalized)
+        normalized = re.sub(r'\n{2,}', '\n', normalized)
+        return normalized.strip()
+
+    @classmethod
+    def _extract_soglasovano_lines(cls, body: str) -> List[str]:
+        """
+        Извлекает все согласованные позиции из тела письма.
+
+        Поддерживает оба формата:
+        - каждая позиция на отдельной строке;
+        - HTML-текст, склеенный без переносов: "... СОГЛАСОВАНО29 - ...".
+        """
+        normalized_body = cls._normalize_soglasovano_source(body)
+        lines: List[str] = []
+        seen = set()
+
+        def add_line(value: str) -> None:
+            cleaned = cls._clean_inline_text(value)
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                lines.append(cleaned)
+
+        # Сначала разбираем построчно: это безопаснее для старого формата
+        # "75    Деталь = согласовано", где HTML-пробелы уже нормализованы.
+        line_pattern = re.compile(
+            r'^\s*(\d+)\s*(?:[-–—]|\s+)\s*(.*?)\s*(?:[-–—=])\s*(СОГЛАСОВАНО)\b',
+            re.IGNORECASE,
+        )
+        for raw_line in normalized_body.splitlines():
+            if len(re.findall(r'СОГЛАСОВАНО', raw_line, re.IGNORECASE)) != 1:
+                continue
+            match = line_pattern.search(raw_line)
+            if not match:
+                continue
+            number = match.group(1).strip()
+            title = cls._clean_inline_text(match.group(2))
+            status = match.group(3).upper()
+            if title:
+                add_line(f'{number} - {title} - {status}')
+
+        if lines:
+            return lines
+
+        # Затем ищем inline-формат без переносов между позициями.
+        # Основные форматы:
+        #   "27 - Ролик отделения ADF в сборе - СОГЛАСОВАНО"
+        #   "75    Ролик отделения ADF в сборе = согласовано"
+        # Паттерн намеренно ищет завершение по слову СОГЛАСОВАНО, чтобы разделять
+        # несколько позиций даже при отсутствии переноса между ними.
+        position_pattern = re.compile(
+            r'(?<!\d)(\d+)\s*(?:[-–—]|\s{2,})\s*(.*?)\s*(?:[-–—=])\s*(СОГЛАСОВАНО)',
+            re.IGNORECASE | re.DOTALL,
+        )
+        for match in position_pattern.finditer(normalized_body):
+            number = match.group(1).strip()
+            title = cls._clean_inline_text(match.group(2))
+            status = match.group(3).upper()
+            if title:
+                add_line(f'{number} - {title} - {status}')
+
+        if lines:
+            return lines
+
+        # Fallback для писем, где строка с согласованием есть, но номер позиции
+        # оформлен нестандартно или отсутствует.
+        for raw_line in normalized_body.splitlines():
+            if re.search(r'СОГЛАСОВАНО', raw_line, re.IGNORECASE):
+                add_line(raw_line)
+
+        if lines:
+            return lines
+
+        # Последний fallback: ограниченный контекст перед словом СОГЛАСОВАНО.
+        fallback_pattern = re.compile(r'.{0,100}?СОГЛАСОВАНО', re.IGNORECASE | re.DOTALL)
+        for match in fallback_pattern.finditer(normalized_body):
+            add_line(match.group(0))
+
+        return lines
+
     def parse_email_content(self, body: str) -> Dict:
         """Парсинг тела письма для извлечения всех полей"""
         result = {}
@@ -220,44 +321,9 @@ class EmailParser:
                 if equip_value and equip_value not in ('Принтер', 'Принтер/МФУ', 'МФУ'):
                     result['printer_model'] = equip_value
 
-        # Поиск ВСЕХ строк с "СОГЛАСОВАНО" в теле письма
-        # Используем re.findall, чтобы не потерять ни одну позицию (была ошибка: re.search находил только первую)
-        # Этап 1: ищем по строкам (с переносами) — стандартный случай
-        soglasovano_matches = re.findall(r'[^\n]*?СОГЛАСОВАНО[^\n]*', body, re.MULTILINE | re.IGNORECASE)
-        if soglasovano_matches:
-            # Объединяем все найденные строки через перенос строки
-            result['soglasovano_line'] = '\n'.join(m.strip() for m in soglasovano_matches)
-        
-        # Этап 2: если не нашли через строки — возможно HTML склеил элементы без переносов.
-        # Ищем шаблон вида "ЦИФРЫ - ТЕКСТ - СОГЛАСОВАНО" в любом месте текста.
-        # Используем .*? (ленивый захват любых символов, включая переносы строк) с re.DOTALL.
-        # Разделитель между позициями: ищем до следующей цифры с дефисом или до конца текста.
-        if 'soglasovano_line' not in result:
-            soglasovano_inline = re.findall(
-                r'\d+\s*[-–—]\s*.*?СОГЛАСОВАНО',
-                body, re.DOTALL | re.IGNORECASE
-            )
-            if soglasovano_inline:
-                # Очищаем каждое совпадение от лишних пробелов и переносов внутри
-                cleaned = []
-                for m in soglasovano_inline:
-                    m_clean = re.sub(r'\s+', ' ', m.strip())
-                    cleaned.append(m_clean)
-                result['soglasovano_line'] = '\n'.join(cleaned)
-        
-        # Этап 3: если всё ещё не нашли — ищем просто все вхождения "СОГЛАСОВАНО"
-        # с окружающим контекстом (до 100 символов слева)
-        if 'soglasovano_line' not in result:
-            soglasovano_fallback = re.findall(
-                r'.{0,100}?СОГЛАСОВАНО',
-                body, re.DOTALL | re.IGNORECASE
-            )
-            if soglasovano_fallback:
-                cleaned = []
-                for m in soglasovano_fallback:
-                    m_clean = re.sub(r'\s+', ' ', m.strip())
-                    cleaned.append(m_clean)
-                result['soglasovano_line'] = '\n'.join(cleaned)
+        soglasovano_lines = self._extract_soglasovano_lines(body)
+        if soglasovano_lines:
+            result['soglasovano_line'] = '\n'.join(soglasovano_lines)
 
         # Парсинг ФИО отдельно
         full_name_pattern = r'Фамилия:\s*(.+?)\n\s*Имя:\s*(.+?)\n\s*Отчество:\s*(.+?)(?:\n|$)'

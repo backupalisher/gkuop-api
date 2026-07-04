@@ -31,22 +31,32 @@ def seed_admin():
     # Создаём таблицы аутентификации (если ещё не созданы)
     auth_db.create_tables()
 
+    admin_username = os.getenv('SEED_ADMIN_USERNAME', 'pamind4')
+    admin_password = os.getenv('SEED_ADMIN_PASSWORD')
+    admin_email = os.getenv('SEED_ADMIN_EMAIL', 'admin@gkuop.ru')
+    if not admin_password:
+        print("✗ Укажите SEED_ADMIN_PASSWORD в окружении перед запуском seed-скрипта")
+        return
+
     # Проверяем, существует ли пользователь
-    existing = auth_db.get_user('pamind4')
+    existing = auth_db.get_user(admin_username)
     if existing:
-        print(f"⚠ Пользователь 'pamind4' уже существует (id={existing.id})")
+        print(f"⚠ Пользователь '{admin_username}' уже существует (id={existing.id})")
         return
 
     # Создаём пользователя с ролью admin
     from auth.models import UserRole
     user = auth_db.create_user(
-        username='pamind4',
-        password='pAdmin4pass',
+        username=admin_username,
+        password=admin_password,
         role=UserRole.ADMIN,
         full_name='Administrator',
-        email='admin@gkuop.ru'
+        email=admin_email,
     )
-    print(f"✓ Пользователь 'pamind4' создан (id={user.id}, role={user.role})")
+    if not user:
+        print("✗ Не удалось создать административного пользователя")
+        return
+    print(f"✓ Пользователь '{admin_username}' создан (id={user.id}, role={user.role})")
     print(f"✓ Разрешения для роли 'admin' назначены автоматически")
 
 

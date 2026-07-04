@@ -9,4 +9,3 @@ aiofiles==24.1.0
 Pillow==11.1.0
 python-multipart==0.0.20
 psutil==6.1.1
-python-jose[cryptography]==3.3.0

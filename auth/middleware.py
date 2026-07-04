@@ -197,6 +197,9 @@ class AuthMiddleware:
         self.auth_db = auth_db
 
     async def __call__(self, request: Request, call_next: Callable):
+        if request.method == 'OPTIONS':
+            return await call_next(request)
+
         # Пропускаем пути, не требующие аутентификации
         if self._is_public_path(request.url.path):
             return await call_next(request)
@@ -245,6 +248,11 @@ class AuthMiddleware:
         # Если токен невалидный или отсутствует — пользователь не аутентифицирован
         logger.debug(f"[DEBUG AuthMiddleware] Пользователь НЕ аутентифицирован, path={request.url.path}")
         set_current_user(request, None)
+        if request.url.path.startswith('/api/'):
+            return JSONResponse(
+                {"error": "Требуется авторизация"},
+                status_code=401,
+            )
         return await call_next(request)
 
     @staticmethod
@@ -253,6 +261,7 @@ class AuthMiddleware:
         public_paths = [
             '/api/auth/login',
             '/api/auth/login-new',  # новый логин для модуля пользователей
+            '/api/health',
             '/static/',
             '/favicon.ico',
         ]

@@ -105,6 +105,7 @@ async def api_get_current_user(request: Request):
 
 
 @router.get("/permissions/catalog")
+@require_permission(Permission.MANAGE_PERMISSIONS)
 async def api_get_permissions_catalog(request: Request):
     """Получение полного каталога всех доступных разрешений"""
     auth_db = get_auth_db(request)

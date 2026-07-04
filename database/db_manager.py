@@ -3,6 +3,7 @@
 """
 import logging
 import time
+import threading
 import psycopg2
 from psycopg2 import pool as psycopg2_pool
 from psycopg2.extras import RealDictCursor
@@ -77,6 +78,23 @@ class DatabaseManager:
         self._retry_max = config.get('retry_max_attempts', 3)
         self._retry_delay = config.get('retry_base_delay', 0.5)
         self._slow_query_threshold = config.get('slow_query_threshold_ms', 500.0)
+        self._lock = threading.RLock()
+
+    def __getattribute__(self, name: str):
+        attr = object.__getattribute__(self, name)
+        if (
+            name.startswith('_')
+            or name in {'connection', 'cursor', 'config'}
+            or not callable(attr)
+        ):
+            return attr
+
+        def locked_method(*args, **kwargs):
+            lock = object.__getattribute__(self, '_lock')
+            with lock:
+                return attr(*args, **kwargs)
+
+        return locked_method
 
     def _ensure_transaction(self):
         """Проверяет состояние транзакции и выполняет rollback, если она в состоянии ошибки.
@@ -327,18 +345,29 @@ class DatabaseManager:
         """)
         sequences = cur.fetchall()
         for seq in sequences:
-            seq_name = seq['sequence_name']
             table_name = seq['table_name']
             column_name = seq['column_name']
             try:
                 cur.execute(
-                    SQL("SELECT setval({seq}, COALESCE((SELECT MAX({col}) FROM {tbl}), 1), false)").format(
-                        seq=SQL(seq_name), col=Identifier(column_name), tbl=Identifier(table_name),
-                    )
+                    SQL(
+                        "SELECT setval("
+                        "pg_get_serial_sequence(%s, %s), "
+                        "COALESCE((SELECT MAX({col}) FROM {tbl}), 0) + 1, "
+                        "false"
+                        ")"
+                    ).format(
+                        col=Identifier(column_name),
+                        tbl=Identifier(table_name),
+                    ),
+                    (table_name, column_name),
                 )
-                logger.debug(f"Sequence {seq_name} восстановлен по MAX({column_name}) из {table_name}")
+                logger.debug(f"Sequence для {table_name}.{column_name} восстановлен")
             except Exception as e:
-                logger.warning(f"Не удалось восстановить sequence {seq_name}: {e}")
+                logger.warning(f"Не удалось восстановить sequence для {table_name}.{column_name}: {e}")
+                try:
+                    conn.rollback()
+                except Exception:
+                    pass
 
     # ─── Подключение (legacy, для обратной совместимости) ────────────
 
@@ -407,6 +436,10 @@ class DatabaseManager:
             self.connection.commit()
         except Exception as e:
             logger.error(f"Ошибка сохранения checkpoint: {e}")
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
 
     def ticket_exists(self, ticket_number: str) -> bool:
         """Проверка существования заявки"""
@@ -473,13 +506,36 @@ class DatabaseManager:
     @_retry_on_db_error(max_attempts=3, base_delay=0.5)
     def update_ticket(self, ticket_number: str, updates: Dict, last_updated_date: datetime = None) -> bool:
         """Обновление существующей заявки"""
+        allowed_fields = {
+            'subject', 'inventory_number', 'printer_model', 'office', 'cabinet',
+            'component', 'status', 'priority', 'assigned_to', 'author_name',
+            'contact_phone', 'department', 'position', 'current_note',
+            'required_action', 'cause', 'fault_description', 'work_done',
+            'tech_conclusion', 'soglasovano_line', 'first_received_date',
+            'last_updated_date', 'is_active', 'is_archived', 'last_status',
+            'completed_by', 'completed_at',
+        }
         try:
-            set_parts = [SQL("{} = %s").format(Identifier(key)) for key in updates.keys()]
+            safe_updates = {
+                key: value for key, value in updates.items()
+                if key in allowed_fields
+            }
+            rejected_fields = set(updates) - set(safe_updates)
+            if rejected_fields:
+                logger.warning(
+                    "Отклонены недопустимые поля обновления заявки %s: %s",
+                    ticket_number,
+                    sorted(rejected_fields),
+                )
+            if not safe_updates and last_updated_date is None:
+                return True
+
+            set_parts = [SQL("{} = %s").format(Identifier(key)) for key in safe_updates.keys()]
             if last_updated_date is not None:
                 set_parts.append(SQL("last_updated_date = %s"))
-                values = list(updates.values()) + [last_updated_date, ticket_number]
+                values = list(safe_updates.values()) + [last_updated_date, ticket_number]
             else:
-                values = list(updates.values()) + [ticket_number]
+                values = list(safe_updates.values()) + [ticket_number]
 
             set_clause = SQL(", ").join(set_parts)
             query = SQL("UPDATE tickets SET {set_clause} WHERE ticket_number = %s").format(set_clause=set_clause)
@@ -504,7 +560,7 @@ class DatabaseManager:
             self.cursor.execute(query, comment.get_insert_params())
             result = self.cursor.fetchone()
             self.connection.commit()
-            return result is not None
+            return True
         except Exception as e:
             print(f"Ошибка сохранения комментария: {e}")
             self.connection.rollback()
@@ -529,7 +585,7 @@ class DatabaseManager:
             self.cursor.execute(query, record.get_insert_params())
             result = self.cursor.fetchone()
             self.connection.commit()
-            return result is not None
+            return True
         except Exception as e:
             print(f"Ошибка сохранения записи истории: {e}")
             self.connection.rollback()
@@ -811,7 +867,7 @@ class DatabaseManager:
             return result
 
     def clear_all_data(self) -> bool:
-        """Очистка всех данных (для перезагрузки) — удаляем и пересоздаём таблицы"""
+        """Очистка всех данных (для перезагрузки) - удаляем и пересоздаём таблицы"""
         try:
             self.connection.commit()
             old_autocommit = self.connection.autocommit
@@ -834,7 +890,7 @@ class DatabaseManager:
             if detail:
                 entry['detail'] = detail
             result['steps'].append(entry)
-            logger.info(f"[FULL_CLEANUP] {name}: {status}" + (f" — {detail}" if detail else ""))
+            logger.info(f"[FULL_CLEANUP] {name}: {status}" + (f" - {detail}" if detail else ""))
 
         try:
             self.connection.commit()
