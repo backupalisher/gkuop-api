@@ -36,7 +36,7 @@ from dotenv import load_dotenv
 from psycopg2.sql import SQL, Identifier
 
 from database.db_manager import DatabaseManager
-from database.models import UserComment
+from database.models import UserComment, TicketImage
 from config.settings import load_config
 from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
