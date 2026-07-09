@@ -51,12 +51,16 @@ ALLOWED_EXTENSIONS = {
     '.txt',
 }
 
-# Максимальный размер файла: 10 МБ
-MAX_FILE_SIZE = 10 * 1024 * 1024
+# Максимальный размер файла: 50 МБ (как до изменений 09.07; сервер сжимает фото перед сохранением)
+MAX_FILE_SIZE = 50 * 1024 * 1024
 
-# Защита от декодирования гигапиксельных изображений (типичный iPhone ≈ 12 МП)
+# Лимиты для уже сжатых/готовых к сохранению изображений
 MAX_DECODE_PIXELS = 20_000_000
 MAX_IMAGE_DIMENSION = 8000
+
+# Абсолютный предел для исходников до компрессии (современный iPhone ≈ 48 МП)
+MAX_SOURCE_DECODE_PIXELS = 55_000_000
+MAX_SOURCE_IMAGE_DIMENSION = 12000
 
 
 def _register_heif_opener() -> bool:
@@ -179,8 +183,19 @@ class ImageManager:
             return fallback.get(ext, mime_type or 'application/octet-stream')
         return mime_type
 
-    def _validate_image_bytes(self, file_bytes: bytes, mime_type: str, filename: str) -> None:
-        """Проверка изображения с ограничением по размеру в пикселях."""
+    def _validate_image_bytes(
+        self,
+        file_bytes: bytes,
+        mime_type: str,
+        filename: str,
+        *,
+        strict: bool = True,
+    ) -> None:
+        """Проверка изображения.
+
+        strict=True  — финальная проверка перед сохранением (после компрессии).
+        strict=False — лёгкая проверка исходника: только читаемость и защита от «бомб».
+        """
         ext = Path(filename).suffix.lower()
         if (mime_type in HEIF_MIME_TYPES or ext in {'.heic', '.heif'}) and not _HEIF_AVAILABLE:
             raise ImageValidationError(
@@ -188,15 +203,25 @@ class ImageManager:
                 'Установите pillow-heif или загрузите JPEG/PNG.'
             )
 
+        max_dimension = MAX_IMAGE_DIMENSION if strict else MAX_SOURCE_IMAGE_DIMENSION
+        max_pixels = MAX_DECODE_PIXELS if strict else MAX_SOURCE_DECODE_PIXELS
+
         try:
             with Image.open(io.BytesIO(file_bytes)) as img:
                 width, height = img.size
-                if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
-                    raise ImageValidationError(
-                        f'Изображение слишком большое: {width}x{height}. '
-                        f'Максимум по стороне: {MAX_IMAGE_DIMENSION} px.'
+                if width > max_dimension or height > max_dimension:
+                    if strict:
+                        raise ImageValidationError(
+                            f'Изображение слишком большое: {width}x{height}. '
+                            f'Максимум по стороне: {max_dimension} px.'
+                        )
+                    logger.warning(
+                        'Исходник %s (%sx%s) будет уменьшен при сохранении',
+                        filename,
+                        width,
+                        height,
                     )
-                if width * height > MAX_DECODE_PIXELS:
+                if width * height > max_pixels:
                     raise ImageValidationError(
                         f'Изображение слишком детализированное: {width}x{height}. '
                         'Уменьшите разрешение или загрузите сжатую копию.'
@@ -207,7 +232,15 @@ class ImageManager:
         except Exception as exc:
             raise ImageValidationError(f'Файл не является корректным изображением: {exc}') from exc
 
-    def validate_file(self, file_bytes: bytes, original_filename: str, mime_type: str) -> None:
+    def validate_file(
+        self,
+        file_bytes: bytes,
+        original_filename: str,
+        mime_type: str,
+        *,
+        decode_image: bool = True,
+        strict_image: bool = True,
+    ) -> None:
         """Валидация загружаемого файла"""
         mime_type = self._normalize_mime_type(mime_type, original_filename)
 
@@ -228,11 +261,22 @@ class ImageManager:
         if len(file_bytes) > MAX_FILE_SIZE:
             raise ImageValidationError(
                 f"Файл слишком большой: {len(file_bytes)} байт. "
-                f"Максимум: {MAX_FILE_SIZE} байт (10 МБ)"
+                f"Максимум: {MAX_FILE_SIZE // (1024 * 1024)} МБ)"
             )
 
         if mime_type.startswith('image/') or ext in {'.heic', '.heif'}:
-            self._validate_image_bytes(file_bytes, mime_type, original_filename)
+            if (mime_type in HEIF_MIME_TYPES or ext in {'.heic', '.heif'}) and not _HEIF_AVAILABLE:
+                raise ImageValidationError(
+                    'Формат HEIC не поддерживается на сервере. '
+                    'Установите pillow-heif или загрузите JPEG/PNG.'
+                )
+            if decode_image:
+                self._validate_image_bytes(
+                    file_bytes,
+                    mime_type,
+                    original_filename,
+                    strict=strict_image,
+                )
 
     def save_file(self, ticket_number: str, file_bytes: bytes,
                   original_filename: str, mime_type: str) -> TicketImage:
@@ -241,22 +285,32 @@ class ImageManager:
         Возвращает объект TicketImage.
         """
         mime_type = self._normalize_mime_type(mime_type, original_filename)
-        self.validate_file(file_bytes, original_filename, mime_type)
+
+        doc_type = self._get_document_type(mime_type, original_filename)
+        is_image = doc_type == 'image' or mime_type in HEIF_MIME_TYPES
+        will_compress = is_image and self.compression_enabled and self.compressor is not None
+
+        self.validate_file(
+            file_bytes,
+            original_filename,
+            mime_type,
+            decode_image=not will_compress,
+            strict_image=True,
+        )
 
         ticket_dir = self._get_ticket_dir(ticket_number)
         filename = self._generate_filename(original_filename)
         file_path = ticket_dir / filename
 
-        doc_type = self._get_document_type(mime_type, original_filename)
-        is_image = doc_type == 'image' or mime_type in HEIF_MIME_TYPES
-
         compressed_bytes = file_bytes
-        if is_image and self.compression_enabled and self.compressor is not None:
+        compression_succeeded = False
+        if will_compress:
             try:
                 source_ext = Path(original_filename).suffix.lower() or '.jpg'
                 compressed_bytes, _compression_info = self.compressor.compress_bytes(
                     file_bytes, source_ext
                 )
+                compression_succeeded = True
                 logger.info(
                     "Сжатие %s: %s → %s байт",
                     original_filename,
@@ -266,6 +320,14 @@ class ImageManager:
             except Exception as exc:
                 logger.warning("Не удалось сжать %s: %s", original_filename, exc)
                 compressed_bytes = file_bytes
+
+        if is_image:
+            self._validate_image_bytes(
+                compressed_bytes,
+                'image/jpeg' if compression_succeeded else mime_type,
+                original_filename,
+                strict=True,
+            )
 
         with open(file_path, 'wb') as file_obj:
             file_obj.write(compressed_bytes)

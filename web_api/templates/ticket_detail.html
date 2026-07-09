@@ -840,8 +840,9 @@
                         onclick="document.getElementById('fileInput').click()">
                         <input type="file" id="fileInput"
                             accept="image/jpeg,image/png,image/gif,image/heic,image/heif,application/pdf,.docx,.xlsx,text/plain,.txt"
+                            capture="environment"
                             multiple onchange="handleFiles(this.files)">
-                        <div class="upload-label">📁 <strong>Загрузить файлы</strong><br>JPEG, PNG, GIF, HEIC, PDF, DOCX, XLSX, TXT до 10 МБ</div>
+                        <div class="upload-label">📁 <strong>Загрузить файлы</strong><br>JPEG, PNG, GIF, HEIC, PDF, DOCX, XLSX, TXT до 50 МБ</div>
                         <div class="upload-hint">или перетащите файлы в эту область</div>
                         <div class="upload-progress" id="uploadProgress"></div>
                     </div>`;
@@ -996,6 +997,7 @@
         const UPLOAD_MAX_SIDE = 1920;
         const UPLOAD_JPEG_QUALITY = 0.82;
         const UPLOAD_SKIP_COMPRESS_BYTES = 700 * 1024;
+        const UPLOAD_COMPRESS_TIMEOUT_MS = 8000;
 
         function isImageUploadFile(file) {
             if (!file) return false;
@@ -1017,9 +1019,22 @@
                     return;
                 }
 
+                let settled = false;
+                const finish = (result) => {
+                    if (settled) return;
+                    settled = true;
+                    resolve(result);
+                };
+
                 const objectUrl = URL.createObjectURL(file);
                 const img = new Image();
+                const timer = setTimeout(() => {
+                    URL.revokeObjectURL(objectUrl);
+                    finish(file);
+                }, UPLOAD_COMPRESS_TIMEOUT_MS);
+
                 img.onload = function() {
+                    clearTimeout(timer);
                     URL.revokeObjectURL(objectUrl);
                     let width = img.naturalWidth || img.width;
                     let height = img.naturalHeight || img.height;
@@ -1032,25 +1047,26 @@
                     canvas.height = height;
                     const ctx = canvas.getContext('2d');
                     if (!ctx) {
-                        resolve(file);
+                        finish(file);
                         return;
                     }
                     ctx.drawImage(img, 0, 0, width, height);
                     canvas.toBlob((blob) => {
                         if (!blob) {
-                            resolve(file);
+                            finish(file);
                             return;
                         }
                         const baseName = (file.name || 'photo').replace(/\.[^.]+$/, '');
-                        resolve(new File([blob], `${baseName}.jpg`, {
+                        finish(new File([blob], `${baseName}.jpg`, {
                             type: 'image/jpeg',
                             lastModified: Date.now(),
                         }));
                     }, 'image/jpeg', UPLOAD_JPEG_QUALITY);
                 };
                 img.onerror = function() {
+                    clearTimeout(timer);
                     URL.revokeObjectURL(objectUrl);
-                    resolve(file);
+                    finish(file);
                 };
                 img.src = objectUrl;
             });
@@ -1065,15 +1081,15 @@
         }
 
         // ─── Обработка выбранных файлов ─────────────────────────────
-        async function handleFiles(files) {
+        function handleFiles(files) {
             if (!files || files.length === 0) return;
 
-            const preparedFiles = await prepareFilesForUpload(Array.from(files));
-            const firstFile = preparedFiles[0];
+            const fileList = Array.from(files);
+            const firstFile = fileList[0];
             if (isImageUploadFile(firstFile)) {
-                showInstantPreview(firstFile, preparedFiles);
+                showInstantPreview(firstFile, fileList);
             } else {
-                doUploadFiles(preparedFiles);
+                doUploadFiles(fileList);
             }
         }
 
@@ -1098,12 +1114,17 @@
                 `;
                 overlay._files = allFiles;
                 const btn = overlay.querySelector('.btn-primary');
-                btn.onclick = function() {
+                btn.onclick = async function() {
                     overlay.remove();
-                    doUploadFiles(overlay._files);
+                    const prepared = await prepareFilesForUpload(overlay._files);
+                    doUploadFiles(prepared);
                 };
                 overlay.querySelector('.btn-ghost').onclick = () => overlay.remove();
                 document.body.appendChild(overlay);
+            };
+            reader.onerror = function() {
+                // HEIC/некоторые форматы не читаются в превью — загружаем без модального окна
+                doUploadFiles(allFiles);
             };
             reader.readAsDataURL(file);
         }
@@ -1152,7 +1173,10 @@
                 progress.className = isError ? 'upload-progress error' : 'upload-progress success';
                 progress.textContent = msg || 'Не удалось загрузить файлы';
 
-                if (!isError) {
+                if (isError) {
+                    const errText = result.errors[0]?.error || msg || 'Не удалось загрузить файлы';
+                    showToast('Ошибка загрузки: ' + errText, 'error');
+                } else if (result.uploaded && result.uploaded.length > 0) {
                     showToast(`Загружено ${result.uploaded.length} файлов`, 'success');
                 }
 

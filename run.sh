@@ -55,6 +55,25 @@ clear_manual_stop_marker() {
     [ -f "$marker_file" ] && rm -f "$marker_file"
 }
 
+ensure_dependencies() {
+    local req_file="$SCRIPT_DIR/requirements.txt"
+    local pip_bin="$SCRIPT_DIR/.venv/bin/pip"
+
+    if [ ! -f "$req_file" ] || [ ! -x "$pip_bin" ]; then
+        return 0
+    fi
+
+    if ! "$PYTHON" -c "import pillow_heif" >/dev/null 2>&1; then
+        echo "📦 Установка недостающих зависимостей (pillow-heif)..."
+        "$pip_bin" install -r "$req_file" -q
+        if ! "$PYTHON" -c "import pillow_heif" >/dev/null 2>&1; then
+            echo "⚠️  pillow-heif не установлен — загрузка HEIC будет недоступна"
+        else
+            echo "✅ Зависимости обновлены"
+        fi
+    fi
+}
+
 # ─── Функции управления ───────────────────────────────────────────
 
 start() {
@@ -71,6 +90,8 @@ start() {
     fi
 
     clear_manual_stop_marker
+
+    ensure_dependencies
 
     echo "🚀 Запуск веб-сервера на порту $PORT..."
     echo "   Uvicorn: $UVICORN"

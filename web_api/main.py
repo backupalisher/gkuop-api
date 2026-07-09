@@ -41,7 +41,7 @@ from config.settings import load_config
 from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
-from services.image_manager import ImageManager, ImageValidationError, MAX_FILE_SIZE as IMAGE_MAX_FILE_SIZE
+from services.image_manager import ImageManager, ImageValidationError, MAX_FILE_SIZE as IMAGE_MAX_FILE_SIZE, _HEIF_AVAILABLE
 from services.image_compressor import CompressionConfig as CompressorConfig, CompressionPreset
 from services.db_backup import (
     DatabaseBackupError,
@@ -263,6 +263,9 @@ async def lifespan(app: FastAPI):
     else:
         image_manager = ImageManager(upload_dir='uploads', compression_enabled=False)
         print("✓ ImageManager инициализирован (компрессия выключена)")
+
+    heif_status = "доступен" if _HEIF_AVAILABLE else "НЕ установлен (pip install pillow-heif)"
+    print(f"📷 Поддержка HEIC/HEIF: {heif_status}")
 
     # Вычисление версии статических файлов
     global static_version
@@ -1544,7 +1547,7 @@ async def api_upload_images(ticket_number: str, request: Request, files: List[Up
                         "file": filename,
                         "error": (
                             f"Файл слишком большой ({file.size / 1024 / 1024:.1f} МБ). "
-                            "Максимум: 10 МБ"
+                            f"Максимум: {max_file_size // (1024 * 1024)} МБ"
                         ),
                     })
                     continue
@@ -1555,7 +1558,7 @@ async def api_upload_images(ticket_number: str, request: Request, files: List[Up
                         "file": filename,
                         "error": (
                             f"Файл слишком большой ({len(file_bytes) / 1024 / 1024:.1f} МБ). "
-                            "Максимум: 10 МБ"
+                            f"Максимум: {max_file_size // (1024 * 1024)} МБ"
                         ),
                     })
                     continue
@@ -2327,6 +2330,7 @@ async def api_health():
         "service": "gkuop-web",
         "timestamp": datetime.utcnow().isoformat(),
         "database": "connected" if db_ok else "disconnected",
+        "heic_support": _HEIF_AVAILABLE,
     }
 
 
