@@ -9,6 +9,9 @@ import hashlib
 import logging
 import threading
 import tempfile
+import asyncio
+import gc
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal
@@ -38,7 +41,7 @@ from config.settings import load_config
 from email_processor.email_client import EmailClient
 from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
-from services.image_manager import ImageManager, ImageValidationError
+from services.image_manager import ImageManager, ImageValidationError, MAX_FILE_SIZE as IMAGE_MAX_FILE_SIZE
 from services.image_compressor import CompressionConfig as CompressorConfig, CompressionPreset
 from services.db_backup import (
     DatabaseBackupError,
@@ -76,6 +79,7 @@ load_dotenv()
 db: DatabaseManager = None
 image_manager: ImageManager = None
 auth_db: AuthDBManager = None
+_upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upload")
 
 # Версия статических файлов (вычисляется при старте)
 static_version: str = "1"
@@ -290,6 +294,7 @@ async def lifespan(app: FastAPI):
 
     # При штатном завершении (lifespan yield завершился) — снимаем обработчики
     uninstall_crash_monitor()
+    _upload_executor.shutdown(wait=False, cancel_futures=True)
     if db:
         db.close()
 
@@ -386,11 +391,20 @@ app.include_router(auth_router)
 @app.middleware("http")
 async def track_request_middleware(request: Request, call_next):
     """Middleware для записи информации о текущем запросе в crash_monitor."""
+    body_preview = None
+    if request.method in {"POST", "PUT", "PATCH"}:
+        content_length = request.headers.get("content-length")
+        content_type = request.headers.get("content-type", "")
+        if content_length:
+            body_preview = f"content-length={content_length}"
+            if "multipart/form-data" in content_type:
+                body_preview += "; multipart upload"
+
     set_last_request(
         method=request.method,
         path=str(request.url.path),
         client_ip=request.client.host if request.client else None,
-        body_preview=None,
+        body_preview=body_preview,
     )
 
     response = await call_next(request)
@@ -1508,8 +1522,9 @@ async def api_upload_images(ticket_number: str, request: Request, files: List[Up
     if not image_manager:
         return JSONResponse({"error": "Менеджер изображений не инициализирован"}, status_code=503)
 
+    loop = asyncio.get_running_loop()
+
     try:
-        # Проверяем существование заявки
         ticket = db.get_ticket(ticket_number)
         if not ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
@@ -1519,40 +1534,57 @@ async def api_upload_images(ticket_number: str, request: Request, files: List[Up
 
         uploaded = []
         errors = []
-
-        MAX_FILE_SIZE = 50 * 1024 * 1024  # 50 МБ
+        max_file_size = IMAGE_MAX_FILE_SIZE
 
         for file in files:
+            filename = file.filename or 'unknown'
             try:
-                # Проверяем размер файла до чтения (если Content-Length известен)
-                if file.size is not None and file.size > MAX_FILE_SIZE:
+                if file.size is not None and file.size > max_file_size:
                     errors.append({
-                        "file": file.filename,
-                        "error": f"Файл слишком большой ({file.size / 1024 / 1024:.1f} МБ). Максимум: 50 МБ"
+                        "file": filename,
+                        "error": (
+                            f"Файл слишком большой ({file.size / 1024 / 1024:.1f} МБ). "
+                            "Максимум: 10 МБ"
+                        ),
                     })
                     continue
 
                 file_bytes = await file.read()
-
-                # Проверяем размер после чтения (если Content-Length не был указан)
-                if len(file_bytes) > MAX_FILE_SIZE:
+                if len(file_bytes) > max_file_size:
                     errors.append({
-                        "file": file.filename,
-                        "error": f"Файл слишком большой ({len(file_bytes) / 1024 / 1024:.1f} МБ). Максимум: 50 МБ"
+                        "file": filename,
+                        "error": (
+                            f"Файл слишком большой ({len(file_bytes) / 1024 / 1024:.1f} МБ). "
+                            "Максимум: 10 МБ"
+                        ),
                     })
                     continue
 
-                mime_type = file.content_type or 'image/jpeg'
-
-                # Сохраняем файл через ImageManager
-                ticket_image = image_manager.save_file(
-                    ticket_number=ticket_number,
-                    file_bytes=file_bytes,
-                    original_filename=file.filename or 'unknown',
-                    mime_type=mime_type,
+                mime_type = file.content_type or 'application/octet-stream'
+                logger.info(
+                    "Загрузка файла для #%s: %s (%s байт, %s)",
+                    ticket_number,
+                    filename,
+                    len(file_bytes),
+                    mime_type,
                 )
 
-                # Сохраняем запись в БД
+                def _save_uploaded_file(
+                    payload: bytes = file_bytes,
+                    original_name: str = filename,
+                    content_type: str = mime_type,
+                ) -> TicketImage:
+                    return image_manager.save_file(
+                        ticket_number=ticket_number,
+                        file_bytes=payload,
+                        original_filename=original_name,
+                        mime_type=content_type,
+                    )
+
+                ticket_image = await loop.run_in_executor(_upload_executor, _save_uploaded_file)
+                del file_bytes
+                gc.collect()
+
                 image_id = db.save_image_record(ticket_image)
                 if image_id:
                     uploaded.append({
@@ -1561,17 +1593,21 @@ async def api_upload_images(ticket_number: str, request: Request, files: List[Up
                         "file_size": ticket_image.file_size,
                         "mime_type": ticket_image.mime_type,
                     })
-                    logger.info(f"Загружено изображение #{image_id} для заявки {ticket_number}")
+                    logger.info("Загружено изображение #%s для заявки %s", image_id, ticket_number)
                 else:
                     logger.error(
-                        f"Не удалось сохранить запись в БД для файла {file.filename} "
-                        f"(заявка {ticket_number}, путь: {ticket_image.file_path})"
+                        "Не удалось сохранить запись в БД для файла %s (заявка %s)",
+                        filename,
+                        ticket_number,
                     )
-                    errors.append({"file": file.filename, "error": "Не удалось сохранить запись в БД"})
-            except ImageValidationError as e:
-                errors.append({"file": file.filename, "error": str(e)})
-            except Exception as e:
-                errors.append({"file": file.filename, "error": f"Внутренняя ошибка: {e}"})
+                    errors.append({"file": filename, "error": "Не удалось сохранить запись в БД"})
+            except ImageValidationError as exc:
+                errors.append({"file": filename, "error": str(exc)})
+            except Exception as exc:
+                logger.exception("Ошибка загрузки файла %s для заявки %s", filename, ticket_number)
+                errors.append({"file": filename, "error": f"Внутренняя ошибка: {exc}"})
+            finally:
+                gc.collect()
 
         return {
             "status": "ok",

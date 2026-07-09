@@ -13,6 +13,7 @@ import uuid
 import hashlib
 import logging
 import subprocess
+import gc
 from pathlib import Path
 from datetime import datetime
 from typing import Optional, List, Tuple
@@ -28,8 +29,14 @@ from services.image_compressor import (
 logger = logging.getLogger(__name__)
 
 # Разрешённые MIME-типы и расширения
+HEIF_MIME_TYPES = {
+    'image/heic',
+    'image/heif',
+    'image/heic-sequence',
+}
 ALLOWED_MIME_TYPES = {
     'image/jpeg', 'image/png', 'image/gif',
+    *HEIF_MIME_TYPES,
     'application/pdf',
     'application/vnd.openxmlformats-officedocument.wordprocessingml.document',  # DOCX
     'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',        # XLSX
@@ -37,6 +44,7 @@ ALLOWED_MIME_TYPES = {
 }
 ALLOWED_EXTENSIONS = {
     '.jpg', '.jpeg', '.png', '.gif',
+    '.heic', '.heif',
     '.pdf',
     '.docx',
     '.xlsx',
@@ -45,6 +53,23 @@ ALLOWED_EXTENSIONS = {
 
 # Максимальный размер файла: 10 МБ
 MAX_FILE_SIZE = 10 * 1024 * 1024
+
+# Защита от декодирования гигапиксельных изображений (типичный iPhone ≈ 12 МП)
+MAX_DECODE_PIXELS = 20_000_000
+MAX_IMAGE_DIMENSION = 8000
+
+
+def _register_heif_opener() -> bool:
+    """Регистрирует поддержку HEIC/HEIF через pillow-heif."""
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+        return True
+    except ImportError:
+        return False
+
+
+_HEIF_AVAILABLE = _register_heif_opener()
 
 # Размер thumbnail (максимальная сторона в пикселях)
 THUMBNAIL_SIZE = (300, 300)
@@ -121,6 +146,8 @@ class ImageManager:
         ext = Path(filename).suffix.lower()
         if ext in ('.jpg', '.jpeg', '.png', '.gif'):
             return 'image'
+        elif ext in ('.heic', '.heif'):
+            return 'image'
         elif ext == '.pdf':
             return 'pdf'
         elif ext == '.docx':
@@ -131,17 +158,66 @@ class ImageManager:
             return 'text'
         return 'unknown'
 
+    def _normalize_mime_type(self, mime_type: str, filename: str) -> str:
+        """Нормализует MIME-тип с учётом расширения (Safari/iPhone часто шлёт пустой type)."""
+        ext = Path(filename).suffix.lower()
+        if mime_type in HEIF_MIME_TYPES or ext in {'.heic', '.heif'}:
+            return 'image/heic'
+        if not mime_type or mime_type == 'application/octet-stream':
+            fallback = {
+                '.jpg': 'image/jpeg',
+                '.jpeg': 'image/jpeg',
+                '.png': 'image/png',
+                '.gif': 'image/gif',
+                '.heic': 'image/heic',
+                '.heif': 'image/heif',
+                '.pdf': 'application/pdf',
+                '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                '.txt': 'text/plain',
+            }
+            return fallback.get(ext, mime_type or 'application/octet-stream')
+        return mime_type
+
+    def _validate_image_bytes(self, file_bytes: bytes, mime_type: str, filename: str) -> None:
+        """Проверка изображения с ограничением по размеру в пикселях."""
+        ext = Path(filename).suffix.lower()
+        if (mime_type in HEIF_MIME_TYPES or ext in {'.heic', '.heif'}) and not _HEIF_AVAILABLE:
+            raise ImageValidationError(
+                'Формат HEIC не поддерживается на сервере. '
+                'Установите pillow-heif или загрузите JPEG/PNG.'
+            )
+
+        try:
+            with Image.open(io.BytesIO(file_bytes)) as img:
+                width, height = img.size
+                if width > MAX_IMAGE_DIMENSION or height > MAX_IMAGE_DIMENSION:
+                    raise ImageValidationError(
+                        f'Изображение слишком большое: {width}x{height}. '
+                        f'Максимум по стороне: {MAX_IMAGE_DIMENSION} px.'
+                    )
+                if width * height > MAX_DECODE_PIXELS:
+                    raise ImageValidationError(
+                        f'Изображение слишком детализированное: {width}x{height}. '
+                        'Уменьшите разрешение или загрузите сжатую копию.'
+                    )
+                img.verify()
+        except ImageValidationError:
+            raise
+        except Exception as exc:
+            raise ImageValidationError(f'Файл не является корректным изображением: {exc}') from exc
+
     def validate_file(self, file_bytes: bytes, original_filename: str, mime_type: str) -> None:
         """Валидация загружаемого файла"""
-        # Проверка MIME-типа
+        mime_type = self._normalize_mime_type(mime_type, original_filename)
+
         if mime_type not in ALLOWED_MIME_TYPES:
             raise ImageValidationError(
                 f"Недопустимый тип файла: {mime_type}. "
-                f"Разрешены: изображения (JPEG, PNG, GIF), "
+                f"Разрешены: изображения (JPEG, PNG, GIF, HEIC), "
                 f"документы (PDF, DOCX, XLSX), текстовые файлы (TXT)"
             )
 
-        # Проверка расширения
         ext = Path(original_filename).suffix.lower()
         if ext not in ALLOWED_EXTENSIONS:
             raise ImageValidationError(
@@ -149,20 +225,14 @@ class ImageManager:
                 f"Разрешены: {', '.join(sorted(ALLOWED_EXTENSIONS))}"
             )
 
-        # Проверка размера
         if len(file_bytes) > MAX_FILE_SIZE:
             raise ImageValidationError(
                 f"Файл слишком большой: {len(file_bytes)} байт. "
                 f"Максимум: {MAX_FILE_SIZE} байт (10 МБ)"
             )
 
-        # Для изображений — проверка через PIL
-        if mime_type.startswith('image/'):
-            try:
-                img = Image.open(io.BytesIO(file_bytes))
-                img.verify()
-            except Exception as e:
-                raise ImageValidationError(f"Файл не является корректным изображением: {e}")
+        if mime_type.startswith('image/') or ext in {'.heic', '.heif'}:
+            self._validate_image_bytes(file_bytes, mime_type, original_filename)
 
     def save_file(self, ticket_number: str, file_bytes: bytes,
                   original_filename: str, mime_type: str) -> TicketImage:
@@ -170,7 +240,7 @@ class ImageManager:
         Для изображений применяется сжатие через ImageCompressor.
         Возвращает объект TicketImage.
         """
-        # Валидация
+        mime_type = self._normalize_mime_type(mime_type, original_filename)
         self.validate_file(file_bytes, original_filename, mime_type)
 
         ticket_dir = self._get_ticket_dir(ticket_number)
@@ -178,49 +248,45 @@ class ImageManager:
         file_path = ticket_dir / filename
 
         doc_type = self._get_document_type(mime_type, original_filename)
-        is_image = doc_type == 'image'
+        is_image = doc_type == 'image' or mime_type in HEIF_MIME_TYPES
 
-        # Сжатие изображения (если включено и доступен компрессор)
         compressed_bytes = file_bytes
-        compression_info = None
         if is_image and self.compression_enabled and self.compressor is not None:
             try:
-                source_ext = Path(original_filename).suffix.lower()
-                compressed_bytes, compression_info = self.compressor.compress_bytes(
+                source_ext = Path(original_filename).suffix.lower() or '.jpg'
+                compressed_bytes, _compression_info = self.compressor.compress_bytes(
                     file_bytes, source_ext
                 )
-                saved_bytes = len(file_bytes) - len(compressed_bytes)
-                saved_pct = (1 - len(compressed_bytes) / len(file_bytes)) * 100
                 logger.info(
-                    f"Сжатие изображения {original_filename}: "
-                    f"{len(file_bytes)} → {len(compressed_bytes)} байт "
-                    f"({saved_pct:.1f}% экономии)"
+                    "Сжатие %s: %s → %s байт",
+                    original_filename,
+                    len(file_bytes),
+                    len(compressed_bytes),
                 )
-            except Exception as e:
-                logger.warning(f"Не удалось сжать изображение {original_filename}: {e}")
+            except Exception as exc:
+                logger.warning("Не удалось сжать %s: %s", original_filename, exc)
                 compressed_bytes = file_bytes
 
-        # Сохраняем файл (сжатый или оригинал)
-        with open(file_path, 'wb') as f:
-            f.write(compressed_bytes)
+        with open(file_path, 'wb') as file_obj:
+            file_obj.write(compressed_bytes)
 
         file_size = len(compressed_bytes)
-        logger.info(f"Сохранён файл: {file_path} ({file_size} байт, тип: {doc_type})")
+        logger.info("Сохранён файл: %s (%s байт, тип: %s)", file_path, file_size, doc_type)
 
-        # Создаём preview/thumbnail
         thumbnail_path = None
         try:
             thumb_filename = self._generate_thumbnail_filename(filename)
             thumb_path = ticket_dir / thumb_filename
             self._create_preview(file_path, thumb_path, mime_type, doc_type)
             thumbnail_path = f"tickets/{ticket_number}/{thumb_filename}"
-            logger.info(f"Создан preview: {thumb_path}")
-        except PreviewGenerationError as e:
-            logger.warning(f"Не удалось создать preview: {e}")
-        except Exception as e:
-            logger.warning(f"Не удалось создать preview: {e}")
+            logger.info("Создан preview: %s", thumb_path)
+        except PreviewGenerationError as exc:
+            logger.warning("Не удалось создать preview: %s", exc)
+        except Exception as exc:
+            logger.warning("Не удалось создать preview: %s", exc)
+        finally:
+            gc.collect()
 
-        # Формируем относительный путь для хранения в БД
         rel_path = f"tickets/{ticket_number}/{filename}"
 
         return TicketImage(
@@ -248,13 +314,17 @@ class ImageManager:
             raise PreviewGenerationError(f"Неизвестный тип документа: {doc_type}")
 
     def _create_image_thumbnail(self, source_path: Path, thumb_path: Path) -> None:
-        """Создание thumbnail для изображения"""
+        """Создание thumbnail для изображения с минимальным потреблением памяти."""
         with Image.open(source_path) as img:
-            # Конвертируем в RGB если нужно
+            if hasattr(img, 'draft') and source_path.suffix.lower() in {'.jpg', '.jpeg'}:
+                try:
+                    img.draft('RGB', THUMBNAIL_SIZE)
+                except Exception:
+                    pass
             if img.mode in ('RGBA', 'P'):
                 img = img.convert('RGB')
             img.thumbnail(THUMBNAIL_SIZE, Image.Resampling.LANCZOS)
-            img.save(thumb_path, 'PNG', quality=85)
+            img.save(thumb_path, 'PNG', optimize=True)
 
     def _create_pdf_preview(self, source_path: Path, thumb_path: Path) -> None:
         """Создание preview первой страницы PDF через pdftoppm или fallback"""

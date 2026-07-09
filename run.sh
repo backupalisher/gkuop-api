@@ -323,6 +323,18 @@ if last_req.get('method'):
 
     if [ $count -eq 0 ]; then
         echo "   Crash-отчётов не найдено"
+        echo ""
+        echo "   Подсказка: при 502 без crash-отчёта часто виноват OOM-killer (SIGKILL)."
+        echo "   Проверьте:"
+        echo "   - tail -n 80 $LOG_FILE"
+        echo "   - dmesg -T | grep -Ei 'killed process|out of memory|oom'"
+        echo "   - journalctl -u nginx --since '1 hour ago' | tail -n 40"
+    fi
+
+    if [ -f "$LOG_FILE" ]; then
+        echo ""
+        echo "─── Последние строки веб-лога ($LOG_FILE) ───"
+        tail -n 25 "$LOG_FILE" 2>/dev/null || true
     fi
     echo ""
     echo "═══════════════════════════════════════════"

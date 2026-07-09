@@ -18,6 +18,7 @@ import threading
 import time
 import json
 import logging
+import atexit
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional, Dict, Any, Callable
@@ -146,20 +147,39 @@ def _get_recent_logs(num_lines: int = 50) -> list:
 
 
 def _get_system_logs_for_pid() -> list:
-    """Попытка получить записи из dmesg/syslog, связанные с нашим PID."""
+    """Попытка получить записи из dmesg/journalctl, связанные с OOM и процессом."""
     entries = []
     try:
-        # dmesg | grep "process_name"
         import subprocess
         proc_name = os.path.basename(sys.argv[0]) if sys.argv else "python"
+
         result = subprocess.run(
-            ["dmesg", "--level=err,warn", "--since", "5 minutes ago"],
+            ["dmesg", "--level=err,warn", "--since", "30 minutes ago"],
             capture_output=True, text=True, timeout=5
         )
         if result.returncode == 0 and result.stdout.strip():
             for line in result.stdout.splitlines():
-                if proc_name in line or "python" in line or "uvicorn" in line:
+                lowered = line.lower()
+                if (
+                    proc_name in line
+                    or "python" in lowered
+                    or "uvicorn" in lowered
+                    or "out of memory" in lowered
+                    or "killed process" in lowered
+                    or "oom" in lowered
+                ):
                     entries.append(line.strip())
+
+        journal = subprocess.run(
+            [
+                "journalctl", "--since", "30 minutes ago", "--no-pager", "-q",
+                "-g", "killed process|Out of memory|oom-kill|uvicorn|python",
+            ],
+            capture_output=True, text=True, timeout=5,
+        )
+        if journal.returncode == 0 and journal.stdout.strip():
+            for line in journal.stdout.splitlines()[-20:]:
+                entries.append(line.strip())
     except Exception:
         pass
     return entries
@@ -482,6 +502,23 @@ def _fatal_signal_handler(signum: int, frame):
 
 # ─── Инициализация монитора ──────────────────────────────────────────
 
+def _atexit_handler():
+    """Фиксирует неожиданное завершение процесса (в т.ч. SIGKILL/OOM без Python-исключения)."""
+    if _shutdown_in_progress or _manual_stop_detected or _is_manual_stop_from_file():
+        return
+    marker = CRASH_LOG_DIR / f"abrupt_exit_{_PID}.json"
+    if marker.exists():
+        return
+    try:
+        report = build_crash_report(
+            reason="Процесс завершился без graceful shutdown (возможен OOM/SIGKILL)",
+            is_manual=False,
+        )
+        save_crash_report(report)
+    except Exception:
+        pass
+
+
 def install_crash_monitor(shutdown_callback: Optional[Callable] = None):
     """Установка всех обработчиков мониторинга аварийных завершений.
 
@@ -514,6 +551,8 @@ def install_crash_monitor(shutdown_callback: Optional[Callable] = None):
 
     # 3. Перехват необработанных исключений
     sys.excepthook = _global_exception_handler
+
+    atexit.register(_atexit_handler)
 
     logger.info("✅ Система мониторинга аварийных завершений установлена")
     logger.info(f"   Crash-логи: {CRASH_LOG_DIR.resolve()}")

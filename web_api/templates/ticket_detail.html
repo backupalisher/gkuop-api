@@ -74,13 +74,22 @@
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
-            // Добавляем заголовок Authorization из auth.js, если доступен
-            const headers = { ...(options.headers || {}) };
-            if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
-                headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+            if (typeof AUTH !== 'undefined' && AUTH.ensureSession) {
+                AUTH.ensureSession();
             }
-            options.headers = headers;
-            const r = await fetch(url, options);
+
+            const performRequest = async () => {
+                if (typeof AUTH !== 'undefined' && AUTH.fetchWithAuth) {
+                    return AUTH.fetchWithAuth(url, options);
+                }
+                const headers = { ...(options.headers || {}) };
+                if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                    headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+                }
+                return fetch(url, { ...options, headers });
+            };
+
+            const r = await performRequest();
             if (!r.ok) {
                 // Пытаемся извлечь человекочитаемое сообщение из JSON-ответа
                 try {
@@ -830,9 +839,9 @@
                     html += `<div class="upload-area" id="uploadArea" data-permission="upload_images"
                         onclick="document.getElementById('fileInput').click()">
                         <input type="file" id="fileInput"
-                            accept="image/jpeg,image/png,image/gif,application/pdf,.docx,.xlsx,text/plain,.txt"
+                            accept="image/jpeg,image/png,image/gif,image/heic,image/heif,application/pdf,.docx,.xlsx,text/plain,.txt"
                             multiple onchange="handleFiles(this.files)">
-                        <div class="upload-label">📁 <strong>Загрузить файлы</strong><br>JPEG, PNG, GIF, PDF, DOCX, XLSX, TXT до 10 МБ</div>
+                        <div class="upload-label">📁 <strong>Загрузить файлы</strong><br>JPEG, PNG, GIF, HEIC, PDF, DOCX, XLSX, TXT до 10 МБ</div>
                         <div class="upload-hint">или перетащите файлы в эту область</div>
                         <div class="upload-progress" id="uploadProgress"></div>
                     </div>`;
@@ -983,15 +992,88 @@
             });
         }
 
+        // ─── Сжатие фото на клиенте (важно для iPhone/Safari) ─────
+        const UPLOAD_MAX_SIDE = 1920;
+        const UPLOAD_JPEG_QUALITY = 0.82;
+        const UPLOAD_SKIP_COMPRESS_BYTES = 700 * 1024;
+
+        function isImageUploadFile(file) {
+            if (!file) return false;
+            const type = (file.type || '').toLowerCase();
+            const name = (file.name || '').toLowerCase();
+            return type.startsWith('image/')
+                || /\.(jpe?g|png|gif|heic|heif|webp)$/i.test(name);
+        }
+
+        function compressImageForUpload(file) {
+            return new Promise((resolve) => {
+                if (!isImageUploadFile(file)) {
+                    resolve(file);
+                    return;
+                }
+                if (file.size <= UPLOAD_SKIP_COMPRESS_BYTES
+                    && !/heic|heif/i.test((file.type || '') + (file.name || ''))) {
+                    resolve(file);
+                    return;
+                }
+
+                const objectUrl = URL.createObjectURL(file);
+                const img = new Image();
+                img.onload = function() {
+                    URL.revokeObjectURL(objectUrl);
+                    let width = img.naturalWidth || img.width;
+                    let height = img.naturalHeight || img.height;
+                    const scale = Math.min(1, UPLOAD_MAX_SIDE / Math.max(width, height, 1));
+                    width = Math.max(1, Math.round(width * scale));
+                    height = Math.max(1, Math.round(height * scale));
+
+                    const canvas = document.createElement('canvas');
+                    canvas.width = width;
+                    canvas.height = height;
+                    const ctx = canvas.getContext('2d');
+                    if (!ctx) {
+                        resolve(file);
+                        return;
+                    }
+                    ctx.drawImage(img, 0, 0, width, height);
+                    canvas.toBlob((blob) => {
+                        if (!blob) {
+                            resolve(file);
+                            return;
+                        }
+                        const baseName = (file.name || 'photo').replace(/\.[^.]+$/, '');
+                        resolve(new File([blob], `${baseName}.jpg`, {
+                            type: 'image/jpeg',
+                            lastModified: Date.now(),
+                        }));
+                    }, 'image/jpeg', UPLOAD_JPEG_QUALITY);
+                };
+                img.onerror = function() {
+                    URL.revokeObjectURL(objectUrl);
+                    resolve(file);
+                };
+                img.src = objectUrl;
+            });
+        }
+
+        async function prepareFilesForUpload(fileList) {
+            const prepared = [];
+            for (const file of fileList) {
+                prepared.push(await compressImageForUpload(file));
+            }
+            return prepared;
+        }
+
         // ─── Обработка выбранных файлов ─────────────────────────────
-        function handleFiles(files) {
+        async function handleFiles(files) {
             if (!files || files.length === 0) return;
 
-            const firstFile = files[0];
-            if (firstFile.type.startsWith('image/')) {
-                showInstantPreview(firstFile, files);
+            const preparedFiles = await prepareFilesForUpload(Array.from(files));
+            const firstFile = preparedFiles[0];
+            if (isImageUploadFile(firstFile)) {
+                showInstantPreview(firstFile, preparedFiles);
             } else {
-                doUploadFiles(files);
+                doUploadFiles(preparedFiles);
             }
         }
 
@@ -1032,8 +1114,9 @@
             const progress = document.getElementById('uploadProgress');
             if (!progress) return;
 
+            const preparedFiles = Array.isArray(files) ? files : await prepareFilesForUpload(Array.from(files));
             const formData = new FormData();
-            for (const file of files) {
+            for (const file of preparedFiles) {
                 formData.append('files', file);
             }
 
