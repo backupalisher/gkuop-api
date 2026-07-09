@@ -8,6 +8,7 @@ import json
 import hashlib
 import logging
 import threading
+import tempfile
 from pathlib import Path
 from datetime import datetime, date
 from decimal import Decimal
@@ -39,9 +40,20 @@ from email_processor.email_parser import EmailParser
 from email_processor.ticket_processor import TicketProcessor
 from services.image_manager import ImageManager, ImageValidationError
 from services.image_compressor import CompressionConfig as CompressorConfig, CompressionPreset
+from services.db_backup import (
+    DatabaseBackupError,
+    build_dump_filename,
+    create_database_dump,
+    restore_database_dump,
+)
+from utils.email_sync import (
+    compute_checkpoint_date,
+    compute_imap_since_date,
+    process_email_messages,
+)
 
 # Импорт модуля аутентификации и авторизации
-from auth.middleware import AuthMiddleware, require_permission, get_current_user
+from auth.middleware import AuthMiddleware, require_permission, require_role, get_current_user
 from auth.db_manager import AuthDBManager
 from auth.router import router as auth_router
 from auth.models import Permission, UserRole
@@ -74,6 +86,7 @@ _rebuild_progress = {
     "total": 0,
     "processed": 0,
     "errors": 0,
+    "skipped": 0,
     "message": "",
     "status": "idle",  # idle | running | completed | error
     "result": None,
@@ -1816,11 +1829,16 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
                 f"Обновление с {since_date.strftime('%d.%m.%Y')}…"
             )
         elif use_incremental:
-            since_date = checkpoint['checkpoint_date']
-            logger.info(f"Инкрементальное обновление: checkpoint от {since_date}, "
-                        f"ранее обработано {checkpoint['processed_count']} писем")
+            since_date = compute_imap_since_date(checkpoint['checkpoint_date'])
+            logger.info(
+                "Инкрементальное обновление: checkpoint=%s, IMAP SINCE=%s, "
+                "ранее обработано %s писем",
+                checkpoint['checkpoint_date'],
+                since_date,
+                checkpoint['processed_count'],
+            )
             _rebuild_progress["message"] = (
-                f"Инкрементальное обновление (checkpoint: {since_date.strftime('%d.%m.%Y')})…"
+                f"Инкрементальное обновление (с {since_date.strftime('%d.%m.%Y')})…"
             )
         else:
             _rebuild_progress["message"] = "Полная перестройка БД…"
@@ -1905,24 +1923,39 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
             from_filter=config['parser'].from_filter,
             since_date=since_date if use_incremental else None
         )
+        if use_incremental and since_date and not email_ids:
+            fallback_since = compute_imap_since_date(since_date)
+            if fallback_since != since_date:
+                logger.warning(
+                    "IMAP-поиск с since=%s вернул 0 писем, повтор с since=%s",
+                    since_date,
+                    fallback_since,
+                )
+                email_ids = email_client.search_emails(
+                    subject_filters=config['parser'].subject_filters,
+                    from_filter=config['parser'].from_filter,
+                    since_date=fallback_since,
+                )
 
         if not email_ids:
             email_client.close()
-            # Сохраняем checkpoint даже если писем нет (обновляем дату)
-            try:
-                now = datetime.now()
-                db.save_checkpoint(now, 0)
-                logger.info(f"Сохранён checkpoint (писем нет): {now}")
-            except Exception as e:
-                logger.error(f"Ошибка сохранения checkpoint: {e}")
+            logger.warning(
+                "IMAP не вернул письма в инкрементальном режиме — checkpoint не изменён"
+            )
             _rebuild_progress.update({
                 "running": False,
                 "total": 0,
                 "processed": 0,
                 "errors": 0,
+                "skipped": 0,
                 "status": "completed",
-                "message": "Нет писем для обработки",
-                "result": {"processed": 0, "errors": 0}
+                "message": "Новых писем не найдено",
+                "result": {
+                    "processed": 0,
+                    "errors": 0,
+                    "skipped": 0,
+                    "no_emails_found": True,
+                }
             })
             return
 
@@ -1930,27 +1963,26 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
         _rebuild_progress["total"] = total
         _rebuild_progress["message"] = f"Обработка писем — 0 из {total}"
 
-        # Обрабатываем письма
-        processed = 0
-        errors = 0
-        for idx, email_id in enumerate(email_ids, 1):
-            email_message = email_client.fetch_email(email_id)
-            if not email_message:
-                errors += 1
-            else:
-                email_data = email_parser.parse_email(email_message)
-                if email_data:
-                    if ticket_processor.process_email(email_data):
-                        processed += 1
-                    else:
-                        errors += 1
-
-            # Обновляем прогресс
+        def _update_progress(idx, total_count, processed_count, error_count, skipped_count):
             _rebuild_progress.update({
-                "processed": processed,
-                "errors": errors,
-                "message": f"Обработка писем — {idx} из {total}",
+                "processed": processed_count,
+                "errors": error_count,
+                "skipped": skipped_count,
+                "message": f"Обработка писем — {idx} из {total_count}",
             })
+
+        batch_result = process_email_messages(
+            email_client,
+            email_parser,
+            ticket_processor,
+            email_ids,
+            progress_callback=_update_progress,
+        )
+        processed = batch_result['processed']
+        errors = batch_result['errors']
+        skipped = batch_result['skipped']
+        skip_details = batch_result['skip_details']
+        received_dates = batch_result['received_dates']
 
         email_client.close()
 
@@ -1990,11 +2022,22 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
         else:
             logger.info("Инкрементальный режим: восстановление статусов пропущено")
 
-        # Шаг 5: Сохраняем checkpoint (только при успешной обработке)
+        # Шаг 5: Сохраняем checkpoint только по датам обработанных писем
         try:
-            now = datetime.now()
-            db.save_checkpoint(now, processed)
-            logger.info(f"Сохранён checkpoint: {now}, обработано писем: {processed}")
+            fallback_checkpoint = checkpoint['checkpoint_date'] if checkpoint else None
+            new_checkpoint_date = compute_checkpoint_date(
+                received_dates,
+                fallback=fallback_checkpoint,
+            )
+            if new_checkpoint_date and processed > 0:
+                db.save_checkpoint(new_checkpoint_date, processed)
+                logger.info(
+                    "Сохранён checkpoint: %s, обработано писем: %s",
+                    new_checkpoint_date,
+                    processed,
+                )
+            elif processed == 0:
+                logger.info("Checkpoint не изменён: новых писем не обработано")
         except Exception as e:
             logger.error(f"Ошибка сохранения checkpoint: {e}")
 
@@ -2004,10 +2047,13 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
         _rebuild_progress.update({
             "running": False,
             "status": "completed",
-            "message": f"Обработано: {processed}, Ошибок: {errors}",
+            "skipped": skipped,
+            "message": f"Обработано: {processed}, Пропущено: {skipped}, Ошибок: {errors}",
             "result": {
                 "processed": processed,
                 "errors": errors,
+                "skipped": skipped,
+                "skip_details": skip_details[:20],
                 "statuses_restored": restored_count,
                 "integrity_result": integrity_result,
             }
@@ -2030,7 +2076,11 @@ async def api_rebuild_start(request: Request):
         return JSONResponse({"error": "БД не подключена"}, status_code=503)
 
     if _rebuild_progress["running"]:
-        return JSONResponse({"error": "Перестройка уже выполняется"}, status_code=409)
+        return JSONResponse({
+            "error": "Перестройка уже выполняется",
+            "status": "already_running",
+            "progress": dict(_rebuild_progress),
+        }, status_code=409)
 
     since_date = None
     try:
@@ -2060,6 +2110,7 @@ async def api_rebuild_start(request: Request):
         "total": 0,
         "processed": 0,
         "errors": 0,
+        "skipped": 0,
         "message": (
             f"Подготовка к обработке с {since_date.strftime('%d.%m.%Y')}…"
             if since_date else
@@ -2097,6 +2148,96 @@ async def api_rebuild_status(request: Request):
 async def api_rebuild(request: Request):
     """Совместимость со старым API: запускает безопасный фоновый rebuild."""
     return await api_rebuild_start(request)
+
+
+# ─── Администрирование БД (только admin) ───────────────────────────
+
+@app.get("/api/admin/db/export")
+@require_role("admin")
+async def api_admin_db_export(request: Request):
+    """Выгрузка дампа PostgreSQL (только для администратора)."""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+
+    config = load_config()
+    try:
+        dump_bytes = create_database_dump(config['database'])
+    except DatabaseBackupError as exc:
+        logger.exception("Ошибка выгрузки дампа БД")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+    filename = build_dump_filename(config['database'].database)
+    return Response(
+        content=dump_bytes,
+        media_type="application/octet-stream",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/api/admin/db/import")
+@require_role("admin")
+async def api_admin_db_import(request: Request, file: UploadFile = File(...)):
+    """Загрузка дампа PostgreSQL из файла (только для администратора)."""
+    global db, auth_db
+
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+
+    if _rebuild_progress["running"]:
+        return JSONResponse(
+            {"error": "Нельзя загрузить дамп во время перестройки данных"},
+            status_code=409,
+        )
+
+    filename = (file.filename or "").lower()
+    if not filename.endswith('.dump'):
+        return JSONResponse(
+            {"error": "Поддерживаются только файлы PostgreSQL custom dump (.dump)"},
+            status_code=400,
+        )
+
+    content = await file.read()
+    if not content:
+        return JSONResponse({"error": "Файл дампа пуст"}, status_code=400)
+
+    config = load_config()
+    temp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.dump', delete=False) as tmp_file:
+            temp_path = tmp_file.name
+            tmp_file.write(content)
+
+        db.close()
+        restore_database_dump(config['database'], temp_path)
+
+        if not db.connect():
+            return JSONResponse({"error": "Не удалось переподключиться к БД"}, status_code=500)
+
+        auth_db = AuthDBManager(db)
+        auth_db.create_tables()
+        auth_db.sync_all_users_permissions()
+
+        return {
+            "status": "ok",
+            "message": "База данных успешно восстановлена из дампа",
+            "filename": file.filename,
+        }
+    except DatabaseBackupError as exc:
+        logger.exception("Ошибка восстановления дампа БД")
+        if not db.connection:
+            db.connect()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    except Exception as exc:
+        logger.exception("Непредвиденная ошибка восстановления дампа БД")
+        if not db.connection:
+            db.connect()
+        return JSONResponse({"error": str(exc)}, status_code=500)
+    finally:
+        if temp_path:
+            Path(temp_path).unlink(missing_ok=True)
 
 
 # ─── HTML эндпоинты ────────────────────────────────────────────────
@@ -2141,8 +2282,7 @@ async def api_health():
     try:
         if db_ok:
             with db._lock:
-                db.cursor.execute("SELECT 1")
-                db_ok = db.cursor.fetchone() is not None
+                db_ok = db.fetch_one("SELECT 1") is not None
     except Exception:
         db_ok = False
 

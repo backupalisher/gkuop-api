@@ -230,22 +230,20 @@ class AuthDBManager:
 
     def get_user(self, username: str) -> Optional[User]:
         """Получение пользователя по username"""
-        self.db.cursor.execute(
+        row = self.db.fetch_one(
             "SELECT * FROM users WHERE username = %s",
-            (username,)
+            (username,),
         )
-        row = self.db.cursor.fetchone()
         if row:
             return self._row_to_user(row)
         return None
 
     def get_user_by_id(self, user_id: int) -> Optional[User]:
         """Получение пользователя по ID"""
-        self.db.cursor.execute(
+        row = self.db.fetch_one(
             "SELECT * FROM users WHERE id = %s",
-            (user_id,)
+            (user_id,),
         )
-        row = self.db.cursor.fetchone()
         if row:
             return self._row_to_user(row)
         return None
@@ -413,12 +411,11 @@ class AuthDBManager:
             return []
 
         # Получаем явно назначенные разрешения из таблицы
-        self.db.cursor.execute(
+        rows = self.db.fetch_all(
             """SELECT permission_code, granted FROM user_permissions
                WHERE username = %s""",
-            (username,)
+            (username,),
         )
-        rows = self.db.cursor.fetchall()
 
         # Явно назначенные (granted = TRUE)
         explicit_granted = {row['permission_code'] for row in rows if row['granted']}
@@ -444,16 +441,15 @@ class AuthDBManager:
             return []
 
         # Получаем явно назначенные разрешения из таблицы
-        self.db.cursor.execute(
+        rows = self.db.fetch_all(
             """SELECT up.permission_code, up.granted,
                       p.name, p.description, p.category
                FROM user_permissions up
                JOIN permissions p ON up.permission_code = p.code
                WHERE up.username = %s
                ORDER BY p.category, p.name""",
-            (username,)
+            (username,),
         )
-        rows = self.db.cursor.fetchall()
 
         # Явно назначенные (granted = TRUE)
         explicit_granted = {r['permission_code'] for r in rows if r['granted']}
@@ -468,10 +464,9 @@ class AuthDBManager:
         effective_codes = explicit_granted | (default_codes - explicit_revoked)
 
         # Получаем полный каталог разрешений для отображения
-        self.db.cursor.execute(
+        all_perms = self.db.fetch_all(
             "SELECT code, name, description, category FROM permissions ORDER BY category, name"
         )
-        all_perms = self.db.cursor.fetchall()
 
         result = []
         for p in all_perms:
@@ -574,12 +569,11 @@ class AuthDBManager:
 
     def get_user_offices(self, username: str) -> List[str]:
         """Получение списка офисов, доступных пользователю для просмотра"""
-        self.db.cursor.execute(
+        rows = self.db.fetch_all(
             "SELECT office_address FROM user_office_permissions "
             "WHERE username = %s ORDER BY office_address",
-            (username,)
+            (username,),
         )
-        rows = self.db.cursor.fetchall()
         return [row['office_address'] for row in rows]
 
     def set_user_offices(self, username: str, offices: List[str]) -> bool:

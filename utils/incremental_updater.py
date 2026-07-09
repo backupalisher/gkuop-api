@@ -5,8 +5,10 @@
 last_update.txt и использует её для фильтрации писем при следующем запуске.
 """
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from typing import Optional
+
+from utils.email_sync import compute_imap_since_date
 
 
 # Константы
@@ -69,9 +71,7 @@ class IncrementalUpdater:
         if last_update is None:
             last_update = self.get_last_update_date()
 
-        # Отступаем 1 день назад и берём начало суток
-        search_from = last_update - timedelta(days=1)
-        return search_from.replace(hour=0, minute=0, second=0, microsecond=0)
+        return compute_imap_since_date(last_update)
 
     def save_update_date(self, update_time: Optional[datetime] = None) -> bool:
         """

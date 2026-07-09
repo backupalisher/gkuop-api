@@ -7,7 +7,7 @@ import html
 from email.header import decode_header
 from email.message import Message
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 from bs4 import BeautifulSoup
 
 
@@ -366,49 +366,56 @@ class EmailParser:
 
         return result
 
-    def parse_email(self, email_message: Message) -> Optional[Dict]:
-        """Полный парсинг письма"""
+    def get_skip_reason(self, email_message: Message) -> Optional[str]:
+        """Возвращает причину пропуска письма или None, если письмо подходит."""
+        subject = self.decode_header_value(email_message.get('Subject', ''))
+        if not any(filter_value in subject for filter_value in self.subject_filters):
+            return 'subject_filter'
+        if not self.extract_ticket_id(subject):
+            return 'no_ticket_id'
+        return None
+
+    def parse_email_detailed(self, email_message: Message) -> Tuple[Optional[Dict], Optional[str]]:
+        """
+        Полный парсинг письма с указанием причины пропуска.
+
+        Returns:
+            tuple(data, skip_reason): data — распарсенное письмо, skip_reason — код пропуска
+        """
+        skip_reason = self.get_skip_reason(email_message)
+        if skip_reason:
+            return None, skip_reason
+
         try:
-            # Базовая информация
             subject = self.decode_header_value(email_message.get('Subject', ''))
             from_addr = self.decode_header_value(email_message.get('From', ''))
-
-            # Проверка фильтра по теме (хотя бы один фильтр должен совпадать)
-            if not any(f in subject for f in self.subject_filters):
-                return None
-
-            # Извлечение номера заявки
             ticket_id = self.extract_ticket_id(subject)
             if not ticket_id:
-                return None
+                return None, 'no_ticket_id'
 
-            # Тело письма
             body_data = self.get_email_body(email_message)
             body = body_data['text']
-
-            # Дата письма
             date_str = email_message.get('Date', '')
             received_date = self.parse_date(date_str)
-
-            # Парсинг содержимого
             parsed_data = self.parse_email_content(body)
 
-            # Формирование результата
             result = {
                 'ticket_number': ticket_id,
                 'subject': subject,
                 'from_address': from_addr,
                 'received_date': received_date,
                 'body': body,
-                **parsed_data
+                **parsed_data,
             }
-
-            # Создание хэша для уникальности
             hash_string = f"{ticket_id}{received_date.isoformat()}{body[:200]}"
             result['email_hash'] = hashlib.sha256(hash_string.encode()).hexdigest()
+            return result, None
 
-            return result
+        except Exception as exc:
+            print(f"✗ Ошибка парсинга письма: {exc}")
+            return None, 'parse_error'
 
-        except Exception as e:
-            print(f"✗ Ошибка парсинга письма: {e}")
-            return None
+    def parse_email(self, email_message: Message) -> Optional[Dict]:
+        """Полный парсинг письма"""
+        email_data, _skip_reason = self.parse_email_detailed(email_message)
+        return email_data

@@ -3,6 +3,7 @@
 """
 import imaplib
 import email
+import time
 from email.message import Message
 from email.header import decode_header
 from typing import List, Optional
@@ -60,13 +61,16 @@ class EmailClient:
             print(f"✗ Ошибка выбора папки {folder}: {e}")
             return False
 
-    def search_emails(self, subject_filters: Optional[list] = None, since_date: Optional[datetime] = None,
-                      from_filter: Optional[str] = None) -> List[bytes]:
-        """Поиск писем по критериям"""
+    def search_emails(
+        self,
+        subject_filters: Optional[list] = None,
+        since_date: Optional[datetime] = None,
+        from_filter: Optional[str] = None,
+        max_attempts: int = 3,
+    ) -> List[bytes]:
+        """Поиск писем по критериям с повторными попытками при сбое IMAP."""
         criteria_parts = []
 
-        # Фильтр по теме не отправляем на сервер (IMAP плохо ищет кириллицу),
-        # фильтрация будет на стороне Python в EmailParser
         if from_filter:
             criteria_parts.append(f'(FROM "{from_filter}")')
 
@@ -76,18 +80,28 @@ class EmailClient:
 
         criteria = ' '.join(criteria_parts) if criteria_parts else 'ALL'
 
-        try:
-            status, messages = self.imap.search(None, criteria)
-            if status == 'OK':
-                email_ids = messages[0].split() if messages[0] else []
-                print(f"✓ Найдено писем: {len(email_ids)}")
-                return email_ids
-            else:
-                print(f"✗ Ошибка поиска писем")
-                return []
-        except Exception as e:
-            print(f"✗ Ошибка при поиске: {e}")
-            return []
+        for attempt in range(1, max_attempts + 1):
+            try:
+                status, messages = self.imap.search(None, criteria)
+                if status == 'OK':
+                    email_ids = messages[0].split() if messages[0] else []
+                    print(f"✓ Найдено писем: {len(email_ids)}")
+                    return email_ids
+
+                print(
+                    f"✗ Ошибка поиска писем (попытка {attempt}/{max_attempts}): "
+                    f"status={status}, criteria={criteria!r}, response={messages!r}"
+                )
+            except Exception as e:
+                print(
+                    f"✗ Ошибка при поиске (попытка {attempt}/{max_attempts}, "
+                    f"criteria={criteria!r}): {e}"
+                )
+
+            if attempt < max_attempts:
+                time.sleep(0.5 * attempt)
+
+        return []
 
     def fetch_email(self, email_id: bytes) -> Optional[Message]:
         """Получение письма по ID"""

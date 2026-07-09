@@ -112,6 +112,33 @@ class DatabaseManager:
                 except Exception:
                     pass
 
+    def fetch_one(self, query: str, params: tuple = None):
+        """Потокобезопасное чтение одной строки."""
+        self._ensure_transaction()
+        self.cursor.execute(query, params or ())
+        return self.cursor.fetchone()
+
+    def fetch_all(self, query: str, params: tuple = None):
+        """Потокобезопасное чтение всех строк."""
+        self._ensure_transaction()
+        self.cursor.execute(query, params or ())
+        return self.cursor.fetchall()
+
+    def execute_sql(self, query: str, params: tuple = None):
+        """Потокобезопасное выполнение SQL без commit."""
+        self._ensure_transaction()
+        self.cursor.execute(query, params or ())
+
+    def execute_and_commit(self, query: str, params: tuple = None):
+        """Потокобезопасное выполнение SQL с commit."""
+        self._ensure_transaction()
+        self.cursor.execute(query, params or ())
+        self.connection.commit()
+
+    def commit(self):
+        """Потокобезопасный commit."""
+        self.connection.commit()
+
     # ─── Пул соединений ──────────────────────────────────────────────
 
     def _init_pool(self):

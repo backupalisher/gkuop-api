@@ -191,20 +191,21 @@ const AUTH = {
     /** Обновление информации о пользователе с сервера */
     async refresh() {
         try {
-            const headers = {};
-            if (this._token) {
-                headers['Authorization'] = `Bearer ${this._token}`;
-            }
-            const response = await fetch('/api/auth/me', { headers });
-            if (!response.ok) {
+            const response = await fetch('/api/auth/me', {
+                headers: this.authHeaders(),
+            });
+            if (response.status === 401) {
                 this.logout();
+                return false;
+            }
+            if (!response.ok) {
+                console.warn('Auth: /api/auth/me вернул статус', response.status);
                 return false;
             }
             const data = await response.json();
             this._user = data.user;
             this._permissions = new Set(data.permissions || []);
             this._saveToStorage();
-            // Переприменяем PermissionGuard после обновления прав
             if (typeof PermissionGuard !== 'undefined') {
                 PermissionGuard.apply();
             }
@@ -213,7 +214,36 @@ const AUTH = {
             console.error('Auth: Ошибка обновления', e);
             return false;
         }
-    }
+    },
+
+    /**
+     * Убедиться, что токен загружен перед API-запросами.
+     */
+    ensureSession() {
+        if (!this._initialized) {
+            this.init();
+        }
+        return Boolean(this._token);
+    },
+
+    /**
+     * fetch с авторизацией и однократным повтором после refresh при 401.
+     */
+    async fetchWithAuth(url, options = {}) {
+        const doFetch = () => fetch(url, {
+            ...options,
+            headers: this.authHeaders(options.headers || {}),
+        });
+
+        let response = await doFetch();
+        if (response.status === 401 && this._token) {
+            const refreshed = await this.refresh();
+            if (refreshed) {
+                response = await doFetch();
+            }
+        }
+        return response;
+    },
 };
 
 

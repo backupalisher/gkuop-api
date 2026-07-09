@@ -40,6 +40,13 @@
                     <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshDataFromDate(); toggleHamburgerMenu();">
                         <span class="menu-icon" aria-hidden="true">Date</span> Обновить данные с...
                     </a>
+                    <a href="#" class="nav-link" data-role="admin" onclick="exportDatabaseDump(); toggleHamburgerMenu();">
+                        <span class="menu-icon" aria-hidden="true">DB</span> Выгрузить БД
+                    </a>
+                    <a href="#" class="nav-link" data-role="admin" onclick="importDatabaseDump(); toggleHamburgerMenu();">
+                        <span class="menu-icon" aria-hidden="true">DB</span> Загрузить БД
+                    </a>
+                    <input type="file" id="dbImportInput" accept=".dump" hidden onchange="handleDatabaseImportSelected(event)">
                     <a href="#" class="nav-link" onclick="handleLogout(); toggleHamburgerMenu();">
                         <span class="menu-icon" aria-hidden="true">Exit</span> Выйти
                     </a>
@@ -149,31 +156,43 @@
 
         // Безопасный fetch с проверкой response.ok и диагностикой ошибок JSON
         async function fetchJSON(url, options = {}) {
-            // Добавляем заголовок Authorization из auth.js, если доступен
-            const headers = { ...(options.headers || {}) };
-            if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
-                headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+            if (typeof AUTH !== 'undefined' && AUTH.ensureSession) {
+                AUTH.ensureSession();
             }
-            options.headers = headers;
-            const r = await fetch(url, options);
+
+            const performRequest = async () => {
+                if (typeof AUTH !== 'undefined' && AUTH.fetchWithAuth) {
+                    return AUTH.fetchWithAuth(url, options);
+                }
+                const headers = { ...(options.headers || {}) };
+                if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                    headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+                }
+                return fetch(url, { ...options, headers });
+            };
+
+            const r = await performRequest();
             if (!r.ok) {
-                // Пытаемся извлечь человекочитаемое сообщение из JSON-ответа
+                const responseClone = r.clone();
                 try {
-                    const errorData = await r.json();
+                    const errorData = await responseClone.json();
                     const userMessage = errorData.message || errorData.error || null;
                     if (userMessage) {
-                        throw new Error(userMessage);
+                        const err = new Error(userMessage);
+                        err.status = r.status;
+                        err.payload = errorData;
+                        throw err;
                     }
                 } catch (parseErr) {
-                    // Если это уже наша ошибка с сообщением — пробрасываем дальше
-                    if (parseErr instanceof Error && parseErr.message !== '') {
+                    if (parseErr instanceof Error && parseErr.message && parseErr.status) {
                         throw parseErr;
                     }
                 }
-                // Если не удалось распарсить JSON или нет message — fallback
                 const text = await r.text();
                 const preview = text.slice(0, 200);
-                throw new Error(`HTTP ${r.status}: ${preview}`);
+                const err = new Error(`HTTP ${r.status}: ${preview}`);
+                err.status = r.status;
+                throw err;
             }
             // Проверяем Content-Type перед парсингом JSON
             const contentType = r.headers.get('content-type') || '';
@@ -1118,6 +1137,16 @@
 
         // ─── Polling прогресса перестройки БД ────────────────
         let _rebuildPollTimer = null;
+        let _rebuildPollFailures = 0;
+
+        function startRebuildPolling(initialMessage) {
+            _rebuildPollFailures = 0;
+            showRebuildProgress(initialMessage || 'Подготовка к обработке…');
+            if (_rebuildPollTimer) {
+                clearTimeout(_rebuildPollTimer);
+            }
+            _rebuildPollTimer = setTimeout(pollRebuildStatus, 1500);
+        }
 
         function showRebuildProgress(message, type) {
             const el = document.getElementById('searchResultsInfo');
@@ -1139,13 +1168,31 @@
         async function pollRebuildStatus() {
             try {
                 const status = await fetchJSON('/api/rebuild/status');
+                _rebuildPollFailures = 0;
 
                 if (status.status === 'running') {
                     showRebuildProgress(status.message || 'Обработка писем…');
                     _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
                 } else if (status.status === 'completed') {
                     hideRebuildProgress();
-                    showToast('✓ Данные успешно обновлены', 'success');
+                    const processed = status.processed || (status.result && status.result.processed) || 0;
+                    const skipped = status.skipped || (status.result && status.result.skipped) || 0;
+                    const errors = status.errors || (status.result && status.result.errors) || 0;
+                    let toastMessage = '✓ Данные успешно обновлены';
+                    let toastType = 'success';
+                    if (processed === 0 && errors === 0) {
+                        toastMessage = 'Новых писем не найдено. Данные в системе актуальны.';
+                        toastType = 'warning';
+                    } else if (errors > 0) {
+                        toastMessage = `Обновление завершено с ошибками: ${errors}`;
+                        toastType = 'warning';
+                    } else if (skipped > 0) {
+                        toastMessage = `✓ Обработано писем: ${processed}. Пропущено: ${skipped}`;
+                        toastType = 'warning';
+                    } else {
+                        toastMessage = `✓ Обработано писем: ${processed}`;
+                    }
+                    showToast(toastMessage, toastType);
                     document.getElementById('errorMsg').style.display = 'none';
                     loadTabCounts();
                     loadTickets();
@@ -1155,9 +1202,20 @@
                     showToast('Ошибка обновления: ' + (status.message || 'Неизвестная ошибка'), 'error');
                 }
             } catch (e) {
+                const isAuthError = e.status === 401 || (e.message && e.message.includes('авториза'));
+                if (isAuthError && _rebuildPollFailures < 5) {
+                    _rebuildPollFailures += 1;
+                    showRebuildProgress('Повторная проверка авторизации…');
+                    if (typeof AUTH !== 'undefined' && AUTH.refresh) {
+                        await AUTH.refresh();
+                    }
+                    _rebuildPollTimer = setTimeout(pollRebuildStatus, 1500);
+                    return;
+                }
                 hideRebuildProgress();
-                showError('Ошибка соединения: ' + e.message);
-                showToast('Ошибка соединения: ' + e.message, 'error');
+                const message = isAuthError ? 'Сессия истекла. Войдите снова.' : e.message;
+                showError('Ошибка соединения: ' + message);
+                showToast('Ошибка соединения: ' + message, 'error');
             }
         }
 
@@ -1179,10 +1237,13 @@
                     return;
                 }
 
-                // Показываем начальный индикатор и запускаем polling
-                showRebuildProgress('Подготовка к обработке…');
-                _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
+                startRebuildPolling('Подготовка к обработке…');
             } catch (e) {
+                if (e.status === 409 && e.payload && e.payload.status === 'already_running') {
+                    startRebuildPolling(e.payload.progress?.message || 'Обновление уже выполняется…');
+                    showToast('Обновление уже выполняется, подключаемся к прогрессу…', 'warning');
+                    return;
+                }
                 showError('Ошибка соединения: ' + e.message);
                 showToast('Ошибка соединения: ' + e.message, 'error');
             }
@@ -1234,14 +1295,105 @@
                     return;
                 }
 
-                showRebuildProgress(`Подготовка к обработке с ${normalizedDate}…`);
-                _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
+                startRebuildPolling(`Подготовка к обработке с ${normalizedDate}…`);
             } catch (e) {
+                if (e.status === 409 && e.payload && e.payload.status === 'already_running') {
+                    startRebuildPolling(e.payload.progress?.message || 'Обновление уже выполняется…');
+                    showToast('Обновление уже выполняется, подключаемся к прогрессу…', 'warning');
+                    return;
+                }
                 showError('Ошибка соединения: ' + e.message);
                 showToast('Ошибка соединения: ' + e.message, 'error');
             }
         }
         const rebuildDatabaseFromDate = PermissionGuard.protectFunction(_rebuildDatabaseFromDate, 'rebuild_data');
+
+        async function _exportDatabaseDump() {
+            showError('');
+            try {
+                const headers = {};
+                if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                    headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+                }
+                const response = await fetch('/api/admin/db/export', { headers });
+                if (!response.ok) {
+                    let message = 'Не удалось выгрузить БД';
+                    try {
+                        const errorData = await response.json();
+                        message = errorData.error || errorData.message || message;
+                    } catch (_) {}
+                    throw new Error(message);
+                }
+                const blob = await response.blob();
+                const disposition = response.headers.get('Content-Disposition') || '';
+                const match = disposition.match(/filename="([^"]+)"/i);
+                const filename = match ? match[1] : `dump_${new Date().toISOString().slice(0, 10)}.dump`;
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement('a');
+                link.href = url;
+                link.download = filename;
+                document.body.appendChild(link);
+                link.click();
+                link.remove();
+                URL.revokeObjectURL(url);
+                showToast('✓ Дамп БД выгружен', 'success');
+            } catch (e) {
+                showError('Ошибка выгрузки БД: ' + e.message);
+                showToast('Ошибка выгрузки БД: ' + e.message, 'error');
+            }
+        }
+        const exportDatabaseDump = PermissionGuard.protectFunction(_exportDatabaseDump, 'admin_access');
+
+        async function _importDatabaseDump() {
+            const confirmed = await showModal(
+                'Загрузка дампа БД',
+                'Текущая база данных будет полностью заменена содержимым файла. Продолжить?'
+            );
+            if (!confirmed) return;
+            document.getElementById('dbImportInput').click();
+        }
+        const importDatabaseDump = PermissionGuard.protectFunction(_importDatabaseDump, 'admin_access');
+
+        async function handleDatabaseImportSelected(event) {
+            const input = event.target;
+            const file = input.files && input.files[0];
+            input.value = '';
+            if (!file) return;
+
+            if (!file.name.toLowerCase().endsWith('.dump')) {
+                showToast('Выберите файл PostgreSQL dump (.dump)', 'error');
+                return;
+            }
+
+            showError('');
+            showRebuildProgress('Восстановление базы данных…');
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                const headers = {};
+                if (typeof AUTH !== 'undefined' && AUTH.getToken()) {
+                    headers['Authorization'] = `Bearer ${AUTH.getToken()}`;
+                }
+                const response = await fetch('/api/admin/db/import', {
+                    method: 'POST',
+                    headers,
+                    body: formData,
+                });
+                const data = await response.json().catch(() => ({}));
+                hideRebuildProgress();
+                if (!response.ok) {
+                    throw new Error(data.error || data.message || 'Не удалось загрузить дамп');
+                }
+                showToast('✓ База данных восстановлена из дампа', 'success');
+                loadTabCounts();
+                loadTickets();
+            } catch (e) {
+                hideRebuildProgress();
+                showError('Ошибка загрузки БД: ' + e.message);
+                showToast('Ошибка загрузки БД: ' + e.message, 'error');
+            }
+        }
 
         function showError(msg) {
             const el = document.getElementById('errorMsg');
@@ -1266,8 +1418,12 @@
         });
 
         // Инициализация
-        // Проверяем авторизацию
-        const auth = getAuth();
+        if (typeof AUTH !== 'undefined' && AUTH.init) {
+            AUTH.init();
+        }
+        const auth = (typeof AUTH !== 'undefined' && AUTH.isAuthenticated && AUTH.isAuthenticated())
+            ? { username: AUTH.getUser()?.username }
+            : getAuth();
         if (auth) {
             showApp();
             // Применяем permission UI после загрузки auth.js

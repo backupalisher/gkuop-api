@@ -308,7 +308,7 @@ def require_permission(permission: Permission):
             user = get_current_user(request)
             if not user:
                 return JSONResponse(
-                    {"message": "Недостаточно прав для выполнения операции"},
+                    {"error": "Требуется авторизация"},
                     status_code=401
                 )
 
@@ -352,7 +352,7 @@ def require_any_permission(permissions: List[Permission]):
 
             user = get_current_user(request)
             if not user:
-                return JSONResponse({"message": "Недостаточно прав для выполнения операции"}, status_code=401)
+                return JSONResponse({"error": "Требуется авторизация"}, status_code=401)
 
             if user.role.value == 'admin':
                 return await func(*args, **kwargs)
@@ -400,7 +400,7 @@ def require_role(role: str):
 
             user = get_current_user(request)
             if not user:
-                return JSONResponse({"message": "Недостаточно прав для выполнения операции"}, status_code=401)
+                return JSONResponse({"error": "Требуется авторизация"}, status_code=401)
 
             if user.role.value != role:
                 logger.warning(

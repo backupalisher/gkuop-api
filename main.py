@@ -14,6 +14,7 @@ from email_processor.ticket_processor import TicketProcessor
 from utils.logger import logger
 from utils.helpers import print_statistics, confirm_action, exit_with_error
 from utils.incremental_updater import IncrementalUpdater
+from utils.email_sync import process_email_messages
 from utils.crash_monitor import install_crash_monitor, uninstall_crash_monitor
 
 # Загрузка переменных окружения
@@ -101,12 +102,22 @@ class EmailParserApplication:
             since_date=since_date,
             from_filter=self.config['parser'].from_filter
         )
+        if since_date and not email_ids:
+            from utils.email_sync import compute_imap_since_date
+            fallback_since = compute_imap_since_date(since_date)
+            if fallback_since != since_date:
+                logger.warning(
+                    "IMAP-поиск с since=%s вернул 0 писем, повтор с since=%s",
+                    since_date,
+                    fallback_since,
+                )
+                email_ids = self.email_client.search_emails(
+                    since_date=fallback_since,
+                    from_filter=self.config['parser'].from_filter,
+                )
 
         if not email_ids:
             logger.info("Нет новых писем для обработки")
-            # Даже если писем нет, обновляем timestamp (обновление успешно выполнено)
-            if update_timestamp:
-                self.incremental_updater.save_update_date()
             return
 
         # Ограничение количества
@@ -114,44 +125,37 @@ class EmailParserApplication:
             email_ids = email_ids[:limit]
             logger.info(f"Ограничение обработки: {limit} писем")
 
-        processed = 0
-        errors = 0
+        batch_result = process_email_messages(
+            self.email_client,
+            self.email_parser,
+            self.ticket_processor,
+            email_ids,
+        )
+        processed = batch_result['processed']
+        errors = batch_result['errors']
+        skipped = batch_result['skipped']
 
-        for i, email_id in enumerate(email_ids, 1):
-            logger.info(f"Обработка письма {i}/{len(email_ids)}")
-
-            # Получение письма
-            email_message = self.email_client.fetch_email(email_id)
-            if not email_message:
-                errors += 1
-                continue
-
-            # Парсинг письма
-            email_data = self.email_parser.parse_email(email_message)
-            if not email_data:
-                logger.warning(f"Письмо не соответствует критериям или не удалось распарсить")
-                continue
-
-            # Обработка заявки
-            if self.ticket_processor.process_email(email_data):
-                processed += 1
-            else:
-                errors += 1
-
-        logger.info(f"Обработка завершена. Обработано: {processed}, Ошибок: {errors}")
+        logger.info(
+            "Обработка завершена. Обработано: %s, Пропущено: %s, Ошибок: %s",
+            processed,
+            skipped,
+            errors,
+        )
 
         # Вывод статистики
         stats = self.db_manager.get_statistics()
         print_statistics(stats)
 
-        # Сохраняем временную метку после обработки (даже если были ошибки,
-        # т.к. письма уже прочитаны с IMAP-сервера и при следующем запуске
-        # могут не попасть в выборку SINCE)
-        if update_timestamp:
-            if errors > 0:
-                logger.warning(f"Были ошибки ({errors}), но временная метка будет сохранена")
+        # Сохраняем метку только если реально обработали письма без ошибок
+        if update_timestamp and processed > 0 and errors == 0:
             self.incremental_updater.save_update_date()
-            logger.info(f"Временная метка обновления сохранена")
+            logger.info("Временная метка обновления сохранена")
+        elif update_timestamp and (errors > 0 or skipped > 0):
+            logger.warning(
+                "Временная метка не обновлена: errors=%s, skipped=%s",
+                errors,
+                skipped,
+            )
 
     def show_ticket_history(self, ticket_number: str):
         """Показать историю заявки"""

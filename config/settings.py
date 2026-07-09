@@ -102,7 +102,12 @@ class ParserConfig:
         'tech_conclusion': r'(?:\*\s*)?Тех\.\s*вывод:\s*(.*?)(?:\n|$)',
     })
 
-
+    @classmethod
+    def from_env(cls):
+        """Загрузка из переменных окружения"""
+        raw_limit = os.getenv('MAX_EMAILS_PER_RUN', '').strip()
+        max_emails_per_run = int(raw_limit) if raw_limit.isdigit() else None
+        return cls(max_emails_per_run=max_emails_per_run)
 
 
 @dataclass
@@ -187,7 +192,7 @@ def load_config():
     return {
         'email': EmailConfig.from_env(),
         'database': DatabaseConfig.from_env(),
-        'parser': ParserConfig(),
+        'parser': ParserConfig.from_env(),
         'compression': CompressionConfig.from_env(),
         'auth': AuthConfig.from_env(),
         'cors': CORSConfig.from_env(),
