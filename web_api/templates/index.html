@@ -212,10 +212,12 @@
 
         function getAuth() {
             try {
-                const raw = sessionStorage.getItem(AUTH_KEY);
+                let raw = localStorage.getItem(AUTH_KEY);
+                if (!raw) raw = sessionStorage.getItem(AUTH_KEY);
                 if (!raw) return null;
                 const data = JSON.parse(raw);
                 if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
+                    localStorage.removeItem(AUTH_KEY);
                     sessionStorage.removeItem(AUTH_KEY);
                     return null;
                 }
@@ -226,13 +228,16 @@
         }
 
         function setAuth(username) {
-            sessionStorage.setItem(AUTH_KEY, JSON.stringify({
+            const payload = JSON.stringify({
                 username: username,
                 timestamp: Date.now()
-            }));
+            });
+            localStorage.setItem(AUTH_KEY, payload);
+            sessionStorage.setItem(AUTH_KEY, payload);
         }
 
         function clearAuth() {
+            localStorage.removeItem(AUTH_KEY);
             sessionStorage.removeItem(AUTH_KEY);
         }
 
@@ -259,7 +264,7 @@
                     // Сохраняем токен, если он есть
                     if (data.token) {
                         try {
-                            sessionStorage.setItem('gkuop_auth_v2', JSON.stringify({
+                            localStorage.setItem('gkuop_auth_v2', JSON.stringify({
                                 user: data.user,
                                 token: data.token,
                                 permissions: data.permissions || [],
@@ -285,8 +290,10 @@
             if (typeof AUTH !== 'undefined' && AUTH.logout) {
                 AUTH.logout();
             }
-            // Очищаем старый ключ для совместимости с ticket_detail.html
-            try { sessionStorage.removeItem('gkuop_auth'); } catch (e) { /* ignore */ }
+            try {
+                localStorage.removeItem('gkuop_auth');
+                sessionStorage.removeItem('gkuop_auth');
+            } catch (e) { /* ignore */ }
             document.getElementById('authOverlay').style.display = 'flex';
             document.getElementById('authIndicator').style.display = 'none';
             document.getElementById('authLogin').value = '';

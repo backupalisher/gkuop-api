@@ -20,16 +20,23 @@ const AUTH = {
 
     /** Инициализация модуля */
     init() {
+        this._loadFromStorage();
         if (this._initialized) return;
         this._initialized = true;
-        this._loadFromStorage();
-        // Проверяем актуальность токена и permissions на сервере
         if (this._token) {
             this.refresh().catch(() => {});
         }
     },
 
-    /** Сохранение данных в sessionStorage */
+    /** Перечитать сессию из хранилища (например, после входа в другой вкладке) */
+    reloadFromStorage() {
+        this._user = null;
+        this._token = null;
+        this._permissions = new Set();
+        this._loadFromStorage();
+    },
+
+    /** Сохранение данных в localStorage (общий для всех вкладок) */
     _saveToStorage() {
         try {
             const data = {
@@ -38,21 +45,29 @@ const AUTH = {
                 permissions: Array.from(this._permissions),
                 timestamp: Date.now(),
             };
-            sessionStorage.setItem(this.KEY, JSON.stringify(data));
+            localStorage.setItem(this.KEY, JSON.stringify(data));
         } catch (e) {
             console.warn('Auth: Не удалось сохранить сессию', e);
         }
     },
 
-    /** Загрузка данных из sessionStorage */
+    /** Загрузка данных из localStorage */
     _loadFromStorage() {
         try {
-            const raw = sessionStorage.getItem(this.KEY);
+            let raw = localStorage.getItem(this.KEY);
+            if (!raw) {
+                // Миграция со старого sessionStorage
+                raw = sessionStorage.getItem(this.KEY);
+                if (raw) {
+                    localStorage.setItem(this.KEY, raw);
+                    sessionStorage.removeItem(this.KEY);
+                }
+            }
             if (!raw) return;
 
             const data = JSON.parse(raw);
-            // Сессия живёт 24 часа
             if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
+                localStorage.removeItem(this.KEY);
                 sessionStorage.removeItem(this.KEY);
                 return;
             }
@@ -161,6 +176,7 @@ const AUTH = {
         this._user = null;
         this._token = null;
         this._permissions = new Set();
+        localStorage.removeItem(this.KEY);
         sessionStorage.removeItem(this.KEY);
         // Останавливаем PermissionGuard при выходе
         if (typeof PermissionGuard !== 'undefined') {
@@ -1332,12 +1348,14 @@ async function handleLoginV2(event) {
                     nameEl.appendChild(document.createTextNode(result.user?.username || login));
                 }
             }
-            // Сохраняем также под старым ключом для совместимости с ticket_detail.html
+            // Сохраняем также под старым ключом для совместимости
             try {
-                sessionStorage.setItem('gkuop_auth', JSON.stringify({
+                const legacyAuth = JSON.stringify({
                     username: result.user?.username || login,
-                    timestamp: Date.now()
-                }));
+                    timestamp: Date.now(),
+                });
+                localStorage.setItem('gkuop_auth', legacyAuth);
+                sessionStorage.setItem('gkuop_auth', legacyAuth);
             } catch (e) { /* ignore */ }
             // Инициализируем PermissionGuard (применяет защиту + MutationObserver)
             PermissionGuard.init();

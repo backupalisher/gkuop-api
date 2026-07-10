@@ -90,6 +90,10 @@
             };
 
             const r = await performRequest();
+            if (r.status === 401) {
+                document.getElementById('authOverlay').style.display = 'flex';
+                throw new Error('Требуется авторизация');
+            }
             if (!r.ok) {
                 // Пытаемся извлечь человекочитаемое сообщение из JSON-ответа
                 try {
@@ -127,10 +131,12 @@
 
         function getAuth() {
             try {
-                const raw = sessionStorage.getItem(AUTH_KEY);
+                let raw = localStorage.getItem(AUTH_KEY);
+                if (!raw) raw = sessionStorage.getItem(AUTH_KEY);
                 if (!raw) return null;
                 const data = JSON.parse(raw);
                 if (Date.now() - data.timestamp > 24 * 60 * 60 * 1000) {
+                    localStorage.removeItem(AUTH_KEY);
                     sessionStorage.removeItem(AUTH_KEY);
                     return null;
                 }
@@ -148,17 +154,23 @@
         }
 
         function setAuth(username) {
-            sessionStorage.setItem(AUTH_KEY, JSON.stringify({
+            const payload = JSON.stringify({
                 username: username,
                 timestamp: Date.now()
-            }));
+            });
+            localStorage.setItem(AUTH_KEY, payload);
+            sessionStorage.setItem(AUTH_KEY, payload);
         }
 
         function clearAuth() {
+            localStorage.removeItem(AUTH_KEY);
             sessionStorage.removeItem(AUTH_KEY);
         }
 
         async function handleLogin(event) {
+            if (typeof handleLoginV2 === 'function') {
+                return handleLoginV2(event);
+            }
             event.preventDefault();
             const login = document.getElementById('authLogin').value.trim();
             const password = document.getElementById('authPassword').value.trim();
@@ -172,12 +184,12 @@
                         setAuth(result.user.username);
                         showApp();
                         errorEl.textContent = '';
-                        // Инициализируем PermissionGuard (применяет защиту + MutationObserver)
                         if (typeof PermissionGuard !== 'undefined') {
                             PermissionGuard.init();
                         } else {
                             setTimeout(applyPermissionUI, 100);
                         }
+                        loadTicket();
                     } else {
                         errorEl.textContent = result.error || 'Неверный логин или пароль';
                     }
@@ -192,7 +204,7 @@
                         // Сохраняем токен, если он есть
                         if (data.token) {
                             try {
-                                sessionStorage.setItem('gkuop_auth_v2', JSON.stringify({
+                                localStorage.setItem('gkuop_auth_v2', JSON.stringify({
                                     user: data.user,
                                     token: data.token,
                                     permissions: data.permissions || [],
@@ -203,6 +215,7 @@
                         setAuth(data.username);
                         showApp();
                         errorEl.textContent = '';
+                        loadTicket();
                     } else {
                         errorEl.textContent = data.message || 'Неверный логин или пароль';
                     }
@@ -215,6 +228,9 @@
 
         function handleLogout() {
             clearAuth();
+            if (typeof AUTH !== 'undefined' && AUTH.logout) {
+                AUTH.logout();
+            }
             document.getElementById('authOverlay').style.display = 'flex';
             document.getElementById('authIndicator').style.display = 'none';
             document.getElementById('authLogin').value = '';
@@ -225,8 +241,10 @@
         function showApp() {
             document.getElementById('authOverlay').style.display = 'none';
             const indicator = document.getElementById('authIndicator');
-            const auth = getAuth();
-            if (auth) {
+            const username = (typeof AUTH !== 'undefined' && AUTH.getUser())
+                ? AUTH.getUser().username
+                : (getAuth()?.username || '');
+            if (username) {
                 indicator.style.display = 'flex';
                 indicator.textContent = '';
                 const wrapper = document.createElement('span');
@@ -234,7 +252,7 @@
                 const dot = document.createElement('span');
                 dot.className = 'auth-dot';
                 wrapper.appendChild(dot);
-                wrapper.appendChild(document.createTextNode(auth.username || ''));
+                wrapper.appendChild(document.createTextNode(username));
                 indicator.appendChild(wrapper);
                 indicator.insertAdjacentHTML('beforeend', `
                     <div class="hamburger-wrap header-ticket-menu" id="ticketHeaderMenu" style="display:none">
@@ -245,11 +263,39 @@
             }
         }
 
-        // Проверяем авторизацию при загрузке
-        const auth = getAuth();
-        if (auth) {
-            showApp();
+        // Инициализация авторизации и загрузка заявки
+        if (typeof AUTH !== 'undefined' && AUTH.init) {
+            AUTH.init();
         }
+
+        function isUserAuthenticated() {
+            return (typeof AUTH !== 'undefined' && AUTH.isAuthenticated && AUTH.isAuthenticated())
+                || Boolean(getAuth());
+        }
+
+        if (isUserAuthenticated()) {
+            showApp();
+            loadTicket();
+        } else {
+            document.getElementById('authOverlay').style.display = 'flex';
+            document.getElementById('content').innerHTML =
+                '<div style="color:var(--color-text-muted);font-size:var(--font-size-base);">Войдите, чтобы просмотреть заявку</div>';
+        }
+
+        window.addEventListener('storage', function(e) {
+            if (e.key === 'gkuop_auth_v2' && e.newValue) {
+                if (typeof AUTH !== 'undefined' && AUTH.reloadFromStorage) {
+                    AUTH.reloadFromStorage();
+                }
+                if (isUserAuthenticated()) {
+                    showApp();
+                    loadTicket();
+                }
+            }
+            if (e.key === 'gkuop_auth_v2' && !e.newValue) {
+                handleLogout();
+            }
+        });
 
         // ─── Гамбургер-меню + закрытие по клику вне ────────
         document.addEventListener('click', function(e) {
@@ -952,8 +998,6 @@
                 hideLoading();
             }
         }
-
-        loadTicket();
 
         // ─── Глобальное состояние lightbox ───────────────────────────
         let lbImages = [];
