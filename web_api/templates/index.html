@@ -69,13 +69,13 @@
 
         <div class="tabs">
             <button class="tab-btn active" id="tabActive" onclick="switchTab('active')">
-                <span class="tab-label">Активные</span> <span class="count" id="countActive">—</span>
+                <span class="tab-icon" aria-hidden="true">📃</span><span class="tab-label">Активные</span> <span class="count" id="countActive">—</span>
             </button>
             <button class="tab-btn" id="tabTasks" onclick="switchTab('tasks')">
-                <span class="tab-label">Задачи</span> <span class="count" id="countTasks">—</span>
+                <span class="tab-icon" aria-hidden="true">📑</span><span class="tab-label">Задачи</span> <span class="count" id="countTasks">—</span>
             </button>
             <button class="tab-btn" id="tabArchived" onclick="switchTab('archived')">
-                <span class="tab-label">Архив</span> <span class="count" id="countArchived">—</span>
+                <span class="tab-icon" aria-hidden="true">🗂️</span><span class="tab-label">Архив</span> <span class="count" id="countArchived">—</span>
             </button>
         </div>
 
@@ -129,6 +129,8 @@
             <div class="pagination" id="pagination"></div>
         </div>
 
+        <!-- Модальное окно заявки (открывается поверх списка) -->
+        <div id="ticketModalRoot"></div>
 
     </div>
 
@@ -356,6 +358,9 @@
             if (typeof updateUsersTabVisibility === 'function') {
                 setTimeout(updateUsersTabVisibility, 150);
             }
+            if (typeof loadTabCounts === 'function') {
+                loadTabCounts();
+            }
         }
 
         // ─── Состояние списка ───────────────────────────────
@@ -375,6 +380,139 @@
                 sessionStorage.setItem(LIST_STATE_KEY, JSON.stringify(state));
             } catch (e) { /* ignore */ }
         }
+
+        // ─── Модальное окно заявки (background routing) ─────────────
+        let _ticketModalOverlay = null;
+        let _ticketModalTicketNumber = null;
+
+        function _getTicketNumberFromPath(pathname) {
+            const match = String(pathname || '').match(/^\/tickets\/([^\/?#]+)$/);
+            if (!match) return null;
+            try {
+                return decodeURIComponent(match[1]);
+            } catch (_) {
+                return match[1];
+            }
+        }
+
+        function _removeTicketModal() {
+            if (_ticketModalOverlay) {
+                _ticketModalOverlay.remove();
+                _ticketModalOverlay = null;
+            }
+            _ticketModalTicketNumber = null;
+        }
+
+        function closeTicketModal() {
+            if (!_ticketModalOverlay) return;
+            if (window.history.length > 1) {
+                history.back();
+            } else {
+                _removeTicketModal();
+                window.location.href = '/';
+            }
+        }
+
+        function openTicketModal(ticketNumberRaw, options = {}) {
+            const ticketNumber = String(ticketNumberRaw || '').trim();
+            if (!ticketNumber) return;
+
+            if (_ticketModalTicketNumber === ticketNumber && _ticketModalOverlay) {
+                return;
+            }
+
+            _removeTicketModal();
+            _ticketModalTicketNumber = ticketNumber;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'modal-overlay';
+            overlay.setAttribute('role', 'dialog');
+            overlay.setAttribute('aria-modal', 'true');
+
+            const modal = document.createElement('div');
+            modal.className = 'modal-content';
+            modal.style.maxWidth = '1100px';
+            modal.style.maxHeight = '86vh';
+            modal.style.height = '86vh';
+            modal.style.padding = '0';
+            modal.style.overflow = 'hidden';
+            modal.style.display = 'flex';
+            modal.style.flexDirection = 'column';
+
+            const header = document.createElement('div');
+            header.style.display = 'flex';
+            header.style.alignItems = 'center';
+            header.style.justifyContent = 'space-between';
+            header.style.padding = '12px 16px';
+            header.style.borderBottom = '1px solid var(--color-border)';
+            header.style.background = 'var(--color-surface)';
+
+            const title = document.createElement('div');
+            title.style.fontSize = 'var(--font-size-lg)';
+            title.style.fontWeight = 'var(--font-weight-semibold)';
+            title.style.color = 'var(--color-text)';
+            title.textContent = `Заявка #${ticketNumber}`;
+
+            const closeBtn = document.createElement('button');
+            closeBtn.className = 'btn btn-ghost';
+            closeBtn.textContent = '✕';
+            closeBtn.setAttribute('aria-label', 'Закрыть');
+            closeBtn.onclick = closeTicketModal;
+
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+
+            const iframe = document.createElement('iframe');
+            iframe.title = `Заявка #${ticketNumber}`;
+            iframe.style.border = '0';
+            iframe.style.width = '100%';
+            iframe.style.flex = '1';
+            iframe.style.background = 'transparent';
+            iframe.referrerPolicy = 'same-origin';
+            iframe.loading = 'eager';
+            iframe.src = `/tickets/${encodeURIComponent(ticketNumber)}?embed=1`;
+
+            modal.appendChild(header);
+            modal.appendChild(iframe);
+            overlay.appendChild(modal);
+
+            overlay.addEventListener('click', (e) => {
+                if (e.target === overlay) closeTicketModal();
+            });
+
+            document.body.appendChild(overlay);
+            _ticketModalOverlay = overlay;
+
+            if (options.pushState) {
+                const url = `/tickets/${encodeURIComponent(ticketNumber)}`;
+                history.pushState({ ticket_modal: true, ticket_number: ticketNumber }, '', url);
+            }
+        }
+
+        function openTicketFromList(ticketNumberRaw, event) {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            saveListState();
+            openTicketModal(ticketNumberRaw, { pushState: true });
+        }
+
+        window.addEventListener('popstate', function() {
+            const ticketNumber = _getTicketNumberFromPath(window.location.pathname);
+            if (ticketNumber) {
+                openTicketModal(ticketNumber, { pushState: false });
+            } else {
+                _removeTicketModal();
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape' && _ticketModalOverlay) {
+                e.preventDefault();
+                closeTicketModal();
+            }
+        }, { passive: false });
 
         function restoreListState() {
             try {
@@ -613,12 +751,15 @@
         }
 
         async function loadTabCounts() {
+            if (typeof AUTH !== 'undefined' && AUTH.ensureSession && !AUTH.ensureSession()) {
+                return;
+            }
             try {
                 const [stats, tasksData] = await Promise.all([
                     fetchJSON('/api/statistics'),
                     fetchJSON('/api/tasks')
                 ]);
-                document.getElementById('countActive').textContent = stats.active ?? '—';
+                document.getElementById('countActive').textContent = stats.total ?? stats.active ?? '—';
                 document.getElementById('countArchived').textContent = stats.archived ?? '—';
                 document.getElementById('countTasks').textContent = tasksData.count ?? '—';
             } catch (e) {
@@ -1063,7 +1204,7 @@
                             ? `<button class="task-toggle-btn ${inTasks ? 'active' : ''}" data-permission="manage_tasks" onclick="toggleTaskFromList('${ticketJs}', event)" title="${inTasks ? 'Удалить из задач' : 'Добавить в задачи'}">${inTasks ? '🔵' : '⚪'}</button> `
                             : '';
                         return `<tr class="${hasComponent ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
-                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${ticketUrl}" class="ticket-link" onclick="saveListState()" title="Заявка #${ticketNumber}">#${ticketNumber}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
+                            <td data-label="№ заявки">${taskBtn}<a href="/tickets/${ticketUrl}" class="ticket-link" onclick="openTicketFromList('${ticketJs}', event)" title="Заявка #${ticketNumber}">#${ticketNumber}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${statusText}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
                             <td data-label="Инв. номер">${inventoryNumber}</td>
                             <td data-label="Требуется" class="${hasRequiredAction ? '' : 'cell-empty'}">${requiredAction}</td>
@@ -1455,6 +1596,11 @@
             applyListState(savedState);
         } else {
             loadTickets();
+        }
+
+        const initialTicketNumber = _getTicketNumberFromPath(window.location.pathname);
+        if (initialTicketNumber) {
+            openTicketModal(initialTicketNumber, { pushState: false });
         }
 
         // Слушаем изменения localStorage из других вкладок/окон (например, при выполнении заявки)

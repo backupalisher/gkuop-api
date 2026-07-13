@@ -158,9 +158,14 @@ const AUTH = {
             body: JSON.stringify({ username, password }),
         });
 
-        const data = await response.json();
+        let data = {};
+        try {
+            data = await response.json();
+        } catch (_) {
+            data = {};
+        }
 
-        if (data.status === 'ok') {
+        if (response.ok && data.status === 'ok') {
             this._user = data.user;
             this._token = data.token || null;
             this._permissions = new Set(data.permissions || []);
@@ -168,7 +173,26 @@ const AUTH = {
             return { success: true, user: data.user, token: data.token, permissions: data.permissions };
         }
 
-        return { success: false, error: data.message || 'Ошибка аутентификации' };
+        const serverMessage = data.message || data.error || null;
+        if (response.status === 503) {
+            return {
+                success: false,
+                error: serverMessage || 'Сервис временно недоступен (ошибка 503)',
+                status: 503,
+            };
+        }
+        if (response.status >= 500) {
+            return {
+                success: false,
+                error: serverMessage || `Ошибка сервера (HTTP ${response.status})`,
+                status: response.status,
+            };
+        }
+        return {
+            success: false,
+            error: serverMessage || 'Ошибка аутентификации',
+            status: response.status,
+        };
     },
 
     /** Выход из системы */
@@ -1364,7 +1388,16 @@ async function handleLoginV2(event) {
                 updateUsersTabVisibility();
             }
             if (typeof loadTickets === 'function') loadTickets();
+            if (typeof loadTabCounts === 'function') loadTabCounts();
             if (typeof loadTicket === 'function') loadTicket();
+            return false;
+        }
+
+        if (result.status === 503) {
+            if (errorEl) {
+                errorEl.textContent = result.error
+                    || 'Сервис аутентификации недоступен. Проверьте подключение к базе данных.';
+            }
             return false;
         }
 

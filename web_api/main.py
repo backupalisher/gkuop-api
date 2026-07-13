@@ -173,70 +173,74 @@ async def lifespan(app: FastAPI):
         'password': config['database'].password,
     }
     db = DatabaseManager(db_config)
-    if not db.connect():
+    db_connected = db.connect()
+    if not db_connected:
         print("✗ Не удалось подключиться к БД")
+        auth_db = None
+        app.state.auth_db = None
+    else:
+        # Инициализация модуля аутентификации
+        auth_db = AuthDBManager(db)
+        auth_db.create_tables()
 
-    # Инициализация модуля аутентификации
-    auth_db = AuthDBManager(db)
-    auth_db.create_tables()
-
-    # Восстановление sequence user_permissions_id_seq при старте
-    try:
-        auth_db.db.cursor.execute(
-            "SELECT setval('user_permissions_id_seq', "
-            "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
-        )
-        auth_db.db.connection.commit()
-        logger.info("Sequence user_permissions_id_seq восстановлен при старте")
-    except Exception as seq_err:
-        logger.warning(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+        # Восстановление sequence user_permissions_id_seq при старте
         try:
-            auth_db.db.connection.rollback()
-        except Exception:
-            pass
+            auth_db.db.cursor.execute(
+                "SELECT setval('user_permissions_id_seq', "
+                "COALESCE((SELECT MAX(id) FROM user_permissions), 0) + 1, false)"
+            )
+            auth_db.db.connection.commit()
+            logger.info("Sequence user_permissions_id_seq восстановлен при старте")
+        except Exception as seq_err:
+            logger.warning(f"Не удалось восстановить sequence user_permissions: {seq_err}")
+            try:
+                auth_db.db.connection.rollback()
+            except Exception:
+                pass
 
     # Миграция: добавление колонок last_status, completed_by, completed_at в таблицу tickets
-    try:
-        db.cursor.execute("""
-            DO $$
-            BEGIN
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'tickets' AND column_name = 'last_status'
-                ) THEN
-                    ALTER TABLE tickets ADD COLUMN last_status VARCHAR(100);
-                END IF;
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'tickets' AND column_name = 'completed_by'
-                ) THEN
-                    ALTER TABLE tickets ADD COLUMN completed_by VARCHAR(200);
-                END IF;
-                IF NOT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = 'tickets' AND column_name = 'completed_at'
-                ) THEN
-                    ALTER TABLE tickets ADD COLUMN completed_at TIMESTAMP;
-                END IF;
-            END $$;
-        """)
-        db.connection.commit()
-        logger.info("Миграция БД: колонки last_status, completed_by, completed_at добавлены/проверены")
-    except Exception as mig_err:
-        logger.warning(f"Не удалось выполнить миграцию БД: {mig_err}")
+    if db_connected:
         try:
-            db.connection.rollback()
-        except Exception:
-            pass
+            db.cursor.execute("""
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'tickets' AND column_name = 'last_status'
+                    ) THEN
+                        ALTER TABLE tickets ADD COLUMN last_status VARCHAR(100);
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'tickets' AND column_name = 'completed_by'
+                    ) THEN
+                        ALTER TABLE tickets ADD COLUMN completed_by VARCHAR(200);
+                    END IF;
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name = 'tickets' AND column_name = 'completed_at'
+                    ) THEN
+                        ALTER TABLE tickets ADD COLUMN completed_at TIMESTAMP;
+                    END IF;
+                END $$;
+            """)
+            db.connection.commit()
+            logger.info("Миграция БД: колонки last_status, completed_by, completed_at добавлены/проверены")
+        except Exception as mig_err:
+            logger.warning(f"Не удалось выполнить миграцию БД: {mig_err}")
+            try:
+                db.connection.rollback()
+            except Exception:
+                pass
 
-    # Синхронизация разрешений всех пользователей с DEFAULT_ROLE_PERMISSIONS
-    try:
-        auth_db.sync_all_users_permissions()
-    except Exception as sync_err:
-        logger.warning(f"Не удалось синхронизировать разрешения: {sync_err}")
+        # Синхронизация разрешений всех пользователей с DEFAULT_ROLE_PERMISSIONS
+        try:
+            auth_db.sync_all_users_permissions()
+        except Exception as sync_err:
+            logger.warning(f"Не удалось синхронизировать разрешения: {sync_err}")
 
-    app.state.auth_db = auth_db
-    print("🔐 Модуль аутентификации инициализирован")
+        app.state.auth_db = auth_db
+        print("🔐 Модуль аутентификации инициализирован")
 
     # Инициализация ImageManager с компрессией изображений
     comp_config = config.get('compression')
@@ -2292,8 +2296,15 @@ async def index(request: Request):
 
 
 @app.get("/tickets/{ticket_number}", response_class=HTMLResponse)
-async def ticket_detail(request: Request, ticket_number: str):
-    """Страница деталей заявки"""
+async def ticket_detail(
+    request: Request,
+    ticket_number: str,
+    embed: bool = Query(False),
+):
+    """Страница деталей заявки.
+
+    embed=True используется для открытия в модальном окне поверх списка (iframe).
+    """
     comment_count = 0
     if db:
         try:
@@ -2306,6 +2317,7 @@ async def ticket_detail(request: Request, ticket_number: str):
             "request": request,
             "ticket_number": ticket_number,
             "comment_count": comment_count,
+            "embed": embed,
             "static_version": static_version,
         },
     )

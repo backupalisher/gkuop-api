@@ -7,6 +7,20 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/main.css?v={{ static_version }}">
     <script src="/static/js/auth.js?v={{ static_version }}"></script>
+    {% if embed %}
+    <style>
+        html, body { height: 100%; }
+        body {
+            background: transparent !important;
+            margin: 0;
+        }
+        .header { display: none !important; }
+        .container { padding: 0 !important; }
+        .card { margin-top: 0 !important; }
+        .action-buttons .btn-back { display: none !important; }
+        .loading-overlay { z-index: 999999 !important; }
+    </style>
+    {% endif %}
 
 </head>
 <body>
