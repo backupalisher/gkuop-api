@@ -239,6 +239,18 @@ async def lifespan(app: FastAPI):
         except Exception as sync_err:
             logger.warning(f"Не удалось синхронизировать разрешения: {sync_err}")
 
+        # Автолечение: tickets.component ← последнее изменение из истории писем
+        try:
+            synced = db.sync_components_from_history()
+            if synced:
+                msg = f"🔧 Синхронизировано комплектующих из истории: {synced}"
+                print(msg, flush=True)
+                logger.info("Синхронизировано component из истории: %s заявок", synced)
+            else:
+                print("✓ Комплектующие синхронизированы с историей (изменений нет)", flush=True)
+        except Exception as comp_sync_err:
+            logger.warning("Не удалось синхронизировать component из истории: %s", comp_sync_err)
+
         app.state.auth_db = auth_db
         print("🔐 Модуль аутентификации инициализирован")
 
@@ -631,7 +643,15 @@ async def api_get_tickets(
                        CASE WHEN t.status = 'Выполнено' THEN t.last_updated_date ELSE NULL END
                    ) AS completed_at,
                    t.last_status,
-                   t.completed_by
+                   t.completed_by,
+                   (
+                       SELECT NULLIF(TRIM(th.changed_fields->>'component'), '')
+                       FROM ticket_history th
+                       WHERE th.ticket_number = t.ticket_number
+                         AND NULLIF(TRIM(COALESCE(th.changed_fields->>'component', '')), '') IS NOT NULL
+                       ORDER BY th.received_date DESC
+                       LIMIT 1
+                   ) AS latest_component
             FROM tickets t
         """) + SQL(where_sql) + SQL(" ORDER BY t.{} {} LIMIT %s OFFSET %s").format(
             sort_column, SQL(sort_order)
@@ -639,6 +659,28 @@ async def api_get_tickets(
         with db._lock:
             db.cursor.execute(data_query, params + [per_page, offset])
             rows = db.cursor.fetchall()
+
+        # Комплектующее: только из changed_fields истории (колонка history.component может быть устаревшей)
+        rows = [dict(row) for row in rows]
+        needs_component_sync = False
+        for row in rows:
+            latest_component = row.pop('latest_component', None)
+            if latest_component:
+                current_component = (row.get('component') or '').strip()
+                if current_component != latest_component.strip():
+                    needs_component_sync = True
+                row['component'] = latest_component
+        # При любом расхождении на странице — автолечение всех заявок в БД
+        if needs_component_sync:
+            try:
+                synced = db.sync_components_from_history()
+                if synced:
+                    logger.info(
+                        "Автолечение component при просмотре списка: обновлено %s заявок",
+                        synced,
+                    )
+            except Exception as sync_err:
+                logger.warning("Автолечение component при просмотре списка не удалось: %s", sync_err)
 
         # Сортировка результатов по уровню приоритета:
         # Уровень 1 (ticket_number) → Уровень 2 (inventory_number) → Уровень 3 (текстовые поля)

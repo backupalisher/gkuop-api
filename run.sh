@@ -9,9 +9,10 @@
 #   ./run.sh supervisor     — запустить супервизор (фоновый мониторинг)
 #   ./run.sh supervisor-stop — остановить супервизор
 #   ./run.sh status         — показать статус сервера и супервизора
+#   ./run.sh setup           — пересоздать .venv и установить зависимости
 #   ./run.sh crash-logs     — показать последние crash-отчёты
 #
-# ВНИМАНИЕ: Запускать без sudo!
+# ВНИМАНИЕ: не запускайте через sudo (иначе uploads/ будет недоступен для записи)!
 # ============================================================
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -21,18 +22,79 @@ LOG_FILE="$SCRIPT_DIR/.gkuop_web.log"
 SUPERVISOR_LOG_FILE="$SCRIPT_DIR/.gkuop_supervisor.log"
 PORT=8002
 HEALTH_CHECK_URL="http://127.0.0.1:${PORT}/api/health"
+SYSTEM_PYTHON="${SYSTEM_PYTHON:-python3}"
+VENV_DIR="$SCRIPT_DIR/.venv"
+PYTHON=""
+UVICORN=""
 
-# Определяем Python из виртуального окружения, если оно есть
-if [ -f "$SCRIPT_DIR/.venv/bin/uvicorn" ]; then
-    UVICORN="$SCRIPT_DIR/.venv/bin/uvicorn"
-    PYTHON="$SCRIPT_DIR/.venv/bin/python"
-elif [ -f "$SCRIPT_DIR/venv/bin/uvicorn" ]; then
-    UVICORN="$SCRIPT_DIR/venv/bin/uvicorn"
-    PYTHON="$SCRIPT_DIR/venv/bin/python"
-else
-    UVICORN="uvicorn"
-    PYTHON="python3"
-fi
+resolve_python_tools() {
+    if [ -x "$VENV_DIR/bin/python" ]; then
+        PYTHON="$VENV_DIR/bin/python"
+        UVICORN="$VENV_DIR/bin/uvicorn"
+        return 0
+    fi
+    if [ -x "$SCRIPT_DIR/venv/bin/python" ]; then
+        PYTHON="$SCRIPT_DIR/venv/bin/python"
+        UVICORN="$SCRIPT_DIR/venv/bin/uvicorn"
+        return 0
+    fi
+    PYTHON="$(command -v python3 2>/dev/null || echo python3)"
+    UVICORN="$(command -v uvicorn 2>/dev/null || echo uvicorn)"
+}
+
+venv_is_healthy() {
+    resolve_python_tools
+    [ -n "$PYTHON" ] && [ -x "$PYTHON" ] || return 1
+    "$PYTHON" -c "import uvicorn, fastapi" >/dev/null 2>&1
+}
+
+setup_venv() {
+    local req_file="$SCRIPT_DIR/requirements.txt"
+
+    if ! command -v "$SYSTEM_PYTHON" >/dev/null 2>&1; then
+        echo "❌ Не найден интерпретатор: $SYSTEM_PYTHON"
+        echo "   Установите: sudo apt install python3 python3-venv python3-pip"
+        exit 1
+    fi
+
+    if [ ! -f "$req_file" ]; then
+        echo "❌ Не найден файл зависимостей: $req_file"
+        exit 1
+    fi
+
+    echo "🔧 Пересоздание виртуального окружения в $VENV_DIR ..."
+    "$SYSTEM_PYTHON" -m venv "$VENV_DIR" --clear
+    resolve_python_tools
+
+    echo "📦 Обновление pip и установка зависимостей..."
+    "$PYTHON" -m pip install --upgrade pip
+    "$PYTHON" -m pip install -r "$req_file"
+
+    if venv_is_healthy; then
+        echo "✅ Виртуальное окружение готово"
+        "$PYTHON" -m pip show uvicorn pillow-heif 2>/dev/null | grep -E '^Name:|^Version:' || true
+    else
+        echo "❌ Не удалось установить зависимости в .venv"
+        exit 1
+    fi
+}
+
+ensure_venv() {
+    if venv_is_healthy; then
+        return 0
+    fi
+
+    echo "⚠️  Виртуальное окружение повреждено или неполное (нет uvicorn/fastapi)."
+    echo "   Автоматическое восстановление..."
+    setup_venv
+}
+
+warn_if_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        echo "⚠️  Сервер запускается от root. Рекомендуется обычный пользователь или www-data."
+        echo "   Иначе uploads/ может стать недоступен для записи после смены пользователя."
+    fi
+}
 
 # ─── Маркер ручной остановки ──────────────────────────────────────
 # Перед отправкой сигнала процессу создаём маркерный файл,
@@ -55,17 +117,56 @@ clear_manual_stop_marker() {
     [ -f "$marker_file" ] && rm -f "$marker_file"
 }
 
+ensure_upload_dirs() {
+    local uploads_dir="$SCRIPT_DIR/uploads"
+    local tickets_dir="$uploads_dir/tickets"
+    local run_user
+    run_user="$(id -un)"
+
+    mkdir -p "$tickets_dir" 2>/dev/null || true
+
+    if [ -d "$uploads_dir" ] && [ -w "$tickets_dir" ]; then
+        chmod -R u+rwX,g+rwX "$uploads_dir" 2>/dev/null || true
+        return 0
+    fi
+
+    echo "⚠️  Нет прав записи в каталог загрузок: $tickets_dir"
+    echo "   Сервер запускается от пользователя: $run_user"
+
+    if [ "$run_user" = "root" ]; then
+        echo "   Попытка исправить права..."
+        chown -R root:root "$uploads_dir" 2>/dev/null || true
+        chmod -R u+rwX,g+rwX "$uploads_dir" 2>/dev/null || true
+    else
+        echo "   Выполните на сервере:"
+        echo "   sudo chown -R $run_user:$run_user \"$uploads_dir\""
+        echo "   sudo chmod -R u+rwX \"$uploads_dir\""
+    fi
+
+    if [ ! -w "$tickets_dir" ]; then
+        echo "❌ Загрузка файлов к заявкам будет недоступна до исправления прав."
+        return 1
+    fi
+    return 0
+}
+
 ensure_dependencies() {
     local req_file="$SCRIPT_DIR/requirements.txt"
-    local pip_bin="$SCRIPT_DIR/.venv/bin/pip"
 
-    if [ ! -f "$req_file" ] || [ ! -x "$pip_bin" ]; then
+    ensure_venv
+    resolve_python_tools
+
+    if [ ! -f "$req_file" ]; then
         return 0
     fi
 
     if ! "$PYTHON" -c "import pillow_heif" >/dev/null 2>&1; then
         echo "📦 Установка недостающих зависимостей (pillow-heif)..."
-        "$pip_bin" install -r "$req_file" -q
+        if ! "$PYTHON" -m pip install -r "$req_file" -q; then
+            echo "⚠️  Не удалось установить зависимости через pip"
+            echo "   Выполните: ./run.sh setup"
+            return 1
+        fi
         if ! "$PYTHON" -c "import pillow_heif" >/dev/null 2>&1; then
             echo "⚠️  pillow-heif не установлен — загрузка HEIC будет недоступна"
         else
@@ -91,7 +192,15 @@ start() {
 
     clear_manual_stop_marker
 
+    warn_if_root
     ensure_dependencies
+    ensure_upload_dirs
+    resolve_python_tools
+
+    if ! venv_is_healthy; then
+        echo "❌ uvicorn недоступен. Выполните: ./run.sh setup"
+        exit 1
+    fi
 
     echo "🚀 Запуск веб-сервера на порту $PORT..."
     echo "   Uvicorn: $UVICORN"
@@ -381,15 +490,19 @@ case "${1:-}" in
     status)
         status
         ;;
+    setup)
+        setup_venv
+        ;;
     crash-logs)
         crash_logs "$@"
         ;;
     *)
-        echo "Использование: $0 {start|stop|restart|supervisor|supervisor-stop|status|crash-logs}"
+        echo "Использование: $0 {start|stop|restart|setup|supervisor|supervisor-stop|status|crash-logs}"
         echo ""
         echo "  start           — запустить веб-сервер"
         echo "  stop            — остановить веб-сервер"
         echo "  restart         — перезапустить веб-сервер"
+        echo "  setup           — пересоздать .venv и установить зависимости"
         echo "  supervisor      — запустить супервизор (фоновый мониторинг)"
         echo "  supervisor-stop — остановить супервизор"
         echo "  status          — показать статус сервера и супервизора"

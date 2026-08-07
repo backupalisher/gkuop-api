@@ -23,6 +23,21 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
+Или одной командой:
+
+```bash
+./run.sh setup
+```
+
+Если при `./run.sh restart` появляется `ModuleNotFoundError: No module named 'uvicorn'` или `pip`,
+пересоздайте окружение:
+
+```bash
+cd /opt/gkuop-api
+./run.sh setup
+./run.sh restart
+```
+
 ## 4. Настройка переменных окружения
 
 Создайте файл `.env` в корне проекта:
@@ -79,6 +94,28 @@ sudo systemctl enable gkuop --now
 sudo systemctl status gkuop
 curl -s http://localhost:8002/tickets/410238
 ```
+
+## 5.1. Каталог загрузок файлов (uploads)
+
+Сервис сохраняет прикреплённые файлы в `uploads/tickets/<номер_заявки>/`.
+Каталог **должен принадлежать пользователю**, под которым запускается uvicorn.
+
+Для systemd (`User=www-data`):
+
+```bash
+sudo mkdir -p /opt/apps/gkuop-api/uploads/tickets
+sudo chown -R www-data:www-data /opt/apps/gkuop-api/uploads
+sudo chmod -R u+rwX /opt/apps/gkuop-api/uploads
+```
+
+Для запуска через `./run.sh` от обычного пользователя:
+
+```bash
+sudo chown -R "$(whoami):$(whoami)" /opt/apps/gkuop-api/uploads
+chmod -R u+rwX uploads
+```
+
+При ошибке `Permission denied: uploads/tickets/...` выполните команды выше и перезапустите сервер.
 
 ## 6. Просмотр логов
 

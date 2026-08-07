@@ -1439,12 +1439,21 @@ tr {
   align-items: center;
 }
 
+/* Группа кнопок слева (Назад + меню действий) */
+.action-buttons-left {
+  display: flex;
+  gap: var(--space-2);
+  align-items: center;
+  flex: 0 0 auto;
+}
+
 /* Группа кнопок, прижатая к правому краю */
 .action-buttons-right {
   display: flex;
   gap: var(--space-3);
   align-items: center;
   margin-left: auto;
+  flex: 0 0 auto;
 }
 
 /* Обёртка для гамбургер-меню (кнопка + выпадашка) */
@@ -3943,10 +3952,16 @@ td {
   justify-content: space-between;
   gap: var(--space-2);
   align-items: center;
+  width: 100%;
 }
 
 .action-buttons-compact .btn-action {
   flex: 0 0 auto;
+}
+
+.action-buttons-compact .ticket-actions-menu .dropdown-menu {
+  left: 0;
+  right: auto;
 }
 
 .action-buttons-compact .btn-back {

@@ -117,7 +117,17 @@ class ImageManager:
     def _get_ticket_dir(self, ticket_number: str) -> Path:
         """Получение директории для заявки"""
         ticket_dir = self.upload_dir / 'tickets' / str(ticket_number)
-        ticket_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            ticket_dir.mkdir(parents=True, exist_ok=True)
+        except PermissionError as exc:
+            raise ImageValidationError(
+                f'Нет прав на запись в каталог загрузок: {ticket_dir}. '
+                f'Обратитесь к администратору: chown/chmod для {self.upload_dir.absolute()}'
+            ) from exc
+        except OSError as exc:
+            raise ImageValidationError(
+                f'Не удалось создать каталог для файлов заявки: {ticket_dir} ({exc})'
+            ) from exc
         return ticket_dir
 
     def _generate_filename(self, original_filename: str) -> str:

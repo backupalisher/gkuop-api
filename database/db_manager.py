@@ -492,7 +492,25 @@ class DatabaseManager:
                 "SELECT * FROM tickets WHERE ticket_number = %s", (ticket_number,)
             )
             row = self.cursor.fetchone()
-            return dict(row) if row else None
+            if not row:
+                return None
+            ticket = dict(row)
+            # Комплектующее: приоритет у последнего изменения из писем (changed_fields)
+            latest_component = self.get_latest_history_field_value(ticket_number, 'component')
+            if latest_component:
+                current = (ticket.get('component') or '').strip()
+                ticket['component'] = latest_component
+                if current != latest_component.strip():
+                    # Автолечение строки tickets при расхождении с историей
+                    try:
+                        self.update_ticket(ticket_number, {'component': latest_component})
+                    except Exception as sync_err:
+                        logger.warning(
+                            "Не удалось автосинхронизировать component заявки %s: %s",
+                            ticket_number,
+                            sync_err,
+                        )
+            return ticket
         except Exception as e:
             logger.error(f"Ошибка получения заявки {ticket_number}: {e}")
             try:
@@ -500,6 +518,87 @@ class DatabaseManager:
             except Exception:
                 pass
             return None
+
+    def get_latest_history_field_value(self, ticket_number: str, field: str) -> Optional[str]:
+        """
+        Последнее непустое значение поля из changed_fields хронологии (по received_date DESC).
+
+        Берём только changed_fields: колонки ticket_history.* часто содержат устаревший
+        снимок tickets на момент записи (например, при ручном «Выполнено»), а не реальное
+        изменение из письма.
+        """
+        allowed = {
+            'component', 'printer_model', 'office', 'cabinet', 'inventory_number',
+            'current_note', 'required_action', 'cause', 'fault_description',
+            'work_done', 'tech_conclusion', 'soglasovano_line', 'status', 'priority',
+        }
+        if field not in allowed:
+            return None
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                SELECT NULLIF(TRIM(changed_fields->>%s), '') AS value
+                FROM ticket_history
+                WHERE ticket_number = %s
+                  AND NULLIF(TRIM(COALESCE(changed_fields->>%s, '')), '') IS NOT NULL
+                ORDER BY received_date DESC
+                LIMIT 1
+                """,
+                (field, ticket_number, field),
+            )
+            row = self.cursor.fetchone()
+            if not row:
+                return None
+            return row.get('value')
+        except Exception as e:
+            logger.error(
+                "Ошибка получения последнего %s из истории заявки %s: %s",
+                field, ticket_number, e,
+            )
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return None
+
+    def sync_components_from_history(self) -> int:
+        """
+        Массовая автосинхронизация tickets.component из последнего changed_fields.component.
+
+        Идемпотентно: обновляет только заявки, где значение в tickets расходится
+        с последним реальным изменением комплектующего в истории писем.
+        Возвращает число обновлённых строк.
+        """
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                UPDATE tickets AS t
+                SET component = latest.component
+                FROM (
+                    SELECT DISTINCT ON (th.ticket_number)
+                        th.ticket_number,
+                        NULLIF(TRIM(th.changed_fields->>'component'), '') AS component
+                    FROM ticket_history AS th
+                    WHERE NULLIF(TRIM(COALESCE(th.changed_fields->>'component', '')), '') IS NOT NULL
+                    ORDER BY th.ticket_number, th.received_date DESC
+                ) AS latest
+                WHERE t.ticket_number = latest.ticket_number
+                  AND latest.component IS NOT NULL
+                  AND COALESCE(TRIM(t.component), '') IS DISTINCT FROM latest.component
+                """
+            )
+            updated = self.cursor.rowcount if self.cursor.rowcount and self.cursor.rowcount > 0 else 0
+            self.connection.commit()
+            return int(updated)
+        except Exception as e:
+            logger.error("Ошибка массовой синхронизации component из истории: %s", e)
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return 0
 
     @_retry_on_db_error(max_attempts=3, base_delay=0.5)
     def save_ticket(self, ticket: Ticket) -> bool:

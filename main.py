@@ -50,6 +50,16 @@ class EmailParserApplication:
         if not self.db_manager.connect():
             return False
 
+        # Автолечение: tickets.component ← последнее изменение из истории писем
+        try:
+            synced = self.db_manager.sync_components_from_history()
+            if synced:
+                logger.info("Синхронизировано component из истории: %s заявок", synced)
+            else:
+                logger.info("Комплектующие уже синхронизированы с историей")
+        except Exception as sync_err:
+            logger.warning("Не удалось синхронизировать component из истории: %s", sync_err)
+
         # Инициализация почтового клиента
         self.email_client = EmailClient(
             imap_server=self.config['email'].imap_server,

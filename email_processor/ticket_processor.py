@@ -15,7 +15,7 @@ class TicketProcessor:
     TRACKED_FIELDS = [
         'status', 'priority', 'assigned_to', 'current_note', 'office', 'cabinet',
         'required_action', 'cause', 'fault_description', 'work_done', 'tech_conclusion',
-        'inventory_number', 'printer_model', 'soglasovano_line'
+        'inventory_number', 'printer_model', 'soglasovano_line', 'component'
     ]
 
     # Человеческие названия полей для комментариев
@@ -34,6 +34,7 @@ class TicketProcessor:
         'inventory_number': 'Инвентарный номер',
         'printer_model': 'Оборудование',
         'soglasovano_line': 'Согласование',
+        'component': 'Комплектующее',
     }
 
     def __init__(self, db_manager: DatabaseManager):

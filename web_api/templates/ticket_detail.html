@@ -268,12 +268,6 @@
                 wrapper.appendChild(dot);
                 wrapper.appendChild(document.createTextNode(username));
                 indicator.appendChild(wrapper);
-                indicator.insertAdjacentHTML('beforeend', `
-                    <div class="hamburger-wrap header-ticket-menu" id="ticketHeaderMenu" style="display:none">
-                        <button class="hamburger-btn" aria-label="Дополнительные действия">☰</button>
-                        <div class="dropdown-menu" id="ticketHeaderDropdown"></div>
-                    </div>
-                `);
             }
         }
 
@@ -735,10 +729,12 @@
                 const commentCount = data.comment_count || 0;
 
                 // Собираем актуальное состояние заявки из тикета + всех diff-записей истории
-                // ВАЖНО: Поля, которые НЕ должны перезаписываться из истории (актуальное значение — в таблице tickets)
+                // ВАЖНО: Поля в _fieldsFromTicket берутся из таблицы tickets (ручные/операторские).
+                // component — намеренно НЕ в списке: берём последнее значение из писем (snapshots по дате).
                 const _fieldsFromTicket = new Set(['status', 'assigned_to', 'priority', 'office', 'cabinet',
                     'required_action', 'cause', 'fault_description', 'work_done', 'tech_conclusion',
-                    'inventory_number', 'department', 'contact_phone', 'author_name', 'position']);
+                    'inventory_number', 'department', 'contact_phone', 'author_name', 'position',
+                    'printer_model', 'current_note']);
                 s = { ...t, _is_task: taskData.is_task === true };
                 const snapshots = history.filter(h => h.type === 'snapshot');
                 for (const snap of snapshots) {
@@ -774,35 +770,40 @@
                     return Number.isNaN(dt.getTime()) ? String(value) : dt.toISOString();
                 };
 
-                // Кнопки действий
+                // Кнопки действий: слева Назад + меню, справа Выполнено/Восстановить
                 const isArchived = t.is_archived === true;
                 let primaryActionHtml = '';
                 let headerMenuHtml = '';
                 if (!isArchived) {
-                    // Кнопка "Задача 🔵" — показываем всегда, кроме случаев когда заявка уже назначена
                     const assignedTo = (s.assigned_to || '').trim();
                     if (!assignedTo) {
                         const isTask = s._is_task === true;
                         headerMenuHtml += `<button class="dropdown-item" data-permission="manage_tasks" onclick="toggleTask()">${isTask ? 'Убрать из задач' : 'Добавить в задачи'}</button>`;
                     }
-                    // Скрываем кнопку "Выполнено" для уже выполненных заявок
                     if (s.status === 'Выполнено' && data.completed_at) {
                         primaryActionHtml = `<button class="btn btn-action btn-complete btn-completed-disabled" disabled title="Заявка уже выполнена ${formatDate(data.completed_at)}">✓ Выполнено</button>`;
+                        headerMenuHtml += `<button class="dropdown-item dropdown-item-danger" data-permission="admin_access" onclick="uncompleteTicket()">Отменить выполнение</button>`;
                     } else {
                         primaryActionHtml = `<button class="btn btn-action btn-complete" data-permission="complete_tickets" onclick="completeTicket()">✓ Выполнено</button>`;
                     }
-                    headerMenuHtml += `<button class="dropdown-item dropdown-item-danger" data-permission="admin_access" onclick="uncompleteTicket()">Отменить выполнение</button>`;
                     headerMenuHtml += `<button class="dropdown-item dropdown-item-warning" data-permission="archive_tickets" onclick="archiveTicket()">В архив</button>`;
                 } else {
                     primaryActionHtml = `<button class="btn btn-action btn-restore" data-permission="archive_tickets" onclick="restoreTicket()">Восстановить</button>`;
-                }
-                if (isArchived) {
                     headerMenuHtml += `<button class="dropdown-item" data-permission="archive_tickets" onclick="restoreTicket()">Восстановить</button>`;
                 }
 
+                const menuVisible = headerMenuHtml.trim() ? 'inline-flex' : 'none';
                 html += `<div class="action-buttons action-buttons-compact">
-                    <a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад</a>
-                    ${primaryActionHtml}
+                    <div class="action-buttons-left">
+                        <a href="/" class="btn btn-action btn-back" onclick="event.preventDefault(); goBackToList()">＜ Назад</a>
+                        <div class="hamburger-wrap ticket-actions-menu" id="ticketHeaderMenu" style="display:${menuVisible}">
+                            <button type="button" class="hamburger-btn" aria-label="Дополнительные действия" aria-haspopup="true">☰</button>
+                            <div class="dropdown-menu" id="ticketHeaderDropdown">${headerMenuHtml}</div>
+                        </div>
+                    </div>
+                    <div class="action-buttons-right">
+                        ${primaryActionHtml}
+                    </div>
                 </div>`;
 
                 const createdDate = formatDate(t.first_received_date);
@@ -834,18 +835,6 @@
                     <h2>Информация по заявке</h2>
                     <div class="info-grid">${informationItems}</div>
                 </div>`;
-
-                setTimeout(() => {
-                    const menu = document.getElementById('ticketHeaderMenu');
-                    const dropdown = document.getElementById('ticketHeaderDropdown');
-                    if (menu && dropdown) {
-                        dropdown.innerHTML = headerMenuHtml;
-                        menu.style.display = headerMenuHtml.trim() ? 'inline-flex' : 'none';
-                        if (typeof PermissionGuard !== 'undefined') {
-                            PermissionGuard.apply();
-                        }
-                    }
-                }, 0);
 
                 // Изображения и документы
                 const images = data.images || [];
@@ -1555,6 +1544,16 @@
         }
 
         // ─── Инициализация drag-and-drop и permission UI после загрузки ─
+        function syncTicketActionsMenuVisibility() {
+            const menu = document.getElementById('ticketHeaderMenu');
+            const dropdown = document.getElementById('ticketHeaderDropdown');
+            if (!menu || !dropdown) return;
+            const visibleItems = Array.from(dropdown.querySelectorAll('.dropdown-item')).filter((el) => {
+                return el.style.display !== 'none' && el.getAttribute('aria-hidden') !== 'true';
+            });
+            menu.style.display = visibleItems.length ? 'inline-flex' : 'none';
+        }
+
         const origLoadTicket = loadTicket;
         loadTicket = async function() {
             await origLoadTicket.call(this);
@@ -1566,6 +1565,7 @@
                 } else {
                     applyPermissionUI();
                 }
+                syncTicketActionsMenuVisibility();
             }, 150);
         };
     </script>
