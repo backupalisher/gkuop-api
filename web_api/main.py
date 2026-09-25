@@ -174,6 +174,7 @@ async def lifespan(app: FastAPI):
     }
     db = DatabaseManager(db_config)
     db_connected = db.connect()
+    app.state.db = db if db_connected else None
     if not db_connected:
         print("✗ Не удалось подключиться к БД")
         auth_db = None
@@ -250,6 +251,14 @@ async def lifespan(app: FastAPI):
                 print("✓ Комплектующие синхронизированы с историей (изменений нет)", flush=True)
         except Exception as comp_sync_err:
             logger.warning("Не удалось синхронизировать component из истории: %s", comp_sync_err)
+
+        # Идемпотентность для мобильного клиента (Idempotency-Key)
+        try:
+            from web_api.idempotency import ensure_idempotency_table
+            ensure_idempotency_table(db)
+            print("✓ Таблица client_idempotency_keys готова", flush=True)
+        except Exception as idem_err:
+            logger.warning("Не удалось инициализировать idempotency table: %s", idem_err)
 
         app.state.auth_db = auth_db
         print("🔐 Модуль аутентификации инициализирован")
@@ -403,6 +412,9 @@ if os.path.isdir(static_dir):
 
 # Подключаем роутер аутентификации
 app.include_router(auth_router)
+
+from web_api.sync_api import router as sync_router
+app.include_router(sync_router)
 
 # ─── Middleware для отслеживания запросов ──────────────────────────
 
@@ -841,6 +853,46 @@ async def api_update_ticket(ticket_number: str, request: Request):
         if access_error:
             return access_error
 
+        # Optimistic concurrency для мобильного клиента (опционально; web без If-Match работает как раньше)
+        if_match = (request.headers.get("If-Match") or request.headers.get("if-match") or "").strip().strip('"')
+        if if_match:
+            server_updated = existing_ticket.get("last_updated_date")
+            server_iso = None
+            if server_updated is not None:
+                if hasattr(server_updated, "isoformat"):
+                    server_iso = server_updated.isoformat()
+                else:
+                    server_iso = str(server_updated)
+            def _norm(v: Optional[str]) -> str:
+                if not v:
+                    return ""
+                return v.replace("Z", "+00:00").replace(" ", "T")[:19]
+            if server_iso and _norm(if_match) != _norm(server_iso):
+                return JSONResponse(
+                    {
+                        "error": "conflict",
+                        "code": "VERSION_CONFLICT",
+                        "message": "Заявка изменена на сервере",
+                        "server_updated_at": server_iso,
+                        "server_ticket": existing_ticket,
+                    },
+                    status_code=409,
+                )
+
+        # Idempotency-Key (опционально)
+        from web_api.idempotency import (
+            extract_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+        current_user = get_current_user(request)
+        idem_key = extract_idempotency_key(request)
+        if idem_key and current_user:
+            cached = lookup_idempotent_response(db, current_user.username, idem_key)
+            if cached:
+                status_code, body = cached
+                return JSONResponse(body, status_code=status_code)
+
         # 2. Получаем данные из тела запроса
         try:
             body = await request.json()
@@ -906,12 +958,18 @@ async def api_update_ticket(ticket_number: str, request: Request):
 
         # 6. Возвращаем обновлённый тикет
         updated_ticket = db.get_ticket(ticket_number)
-        return {
+        result = {
             "status": "ok",
             "message": f"Обновлено полей: {len(changed_fields)}",
             "changed_fields": changed_fields,
             "ticket": updated_ticket
         }
+        if idem_key and current_user:
+            store_idempotent_response(
+                db, current_user.username, idem_key, "PUT",
+                f"/api/tickets/{ticket_number}", 200, result,
+            )
+        return result
     except Exception as e:
         return JSONResponse({"error": str(e)}, status_code=500)
 
@@ -1339,6 +1397,18 @@ async def api_add_comment(ticket_number: str, request: Request):
         if not current_user:
             return JSONResponse({"error": "Пользователь не авторизован"}, status_code=401)
 
+        from web_api.idempotency import (
+            extract_idempotency_key,
+            lookup_idempotent_response,
+            store_idempotent_response,
+        )
+        idem_key = extract_idempotency_key(request)
+        if idem_key:
+            cached = lookup_idempotent_response(db, current_user.username, idem_key)
+            if cached:
+                status_code, body = cached
+                return JSONResponse(body, status_code=status_code)
+
         if current_user.role != UserRole.ADMIN:
             user_offices = auth_db.get_user_offices(current_user.username)
             ticket_office = existing_ticket.get('office', '')
@@ -1374,7 +1444,7 @@ async def api_add_comment(ticket_number: str, request: Request):
             return JSONResponse({"error": "Не удалось сохранить комментарий"}, status_code=500)
 
         # Возвращаем созданный комментарий
-        return {
+        result = {
             "status": "ok",
             "message": "Комментарий добавлен",
             "comment": {
@@ -1386,6 +1456,12 @@ async def api_add_comment(ticket_number: str, request: Request):
                 "created_at": comment.created_at.isoformat() if comment.created_at else None,
             }
         }
+        if idem_key:
+            store_idempotent_response(
+                db, current_user.username, idem_key, "POST",
+                f"/api/tickets/{ticket_number}/comments", 200, result,
+            )
+        return result
     except Exception as e:
         logger.exception(f"Ошибка добавления комментария к заявке {ticket_number}")
         return JSONResponse({"error": str(e)}, status_code=500)
