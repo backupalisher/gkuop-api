@@ -235,6 +235,14 @@ class SyncEngine {
         if (serverId != null) {
           await _api.delete('/api/images/$serverId', headers: headers);
         }
+        await (_db.update(
+          _db.ticketAttachments,
+        )..where((t) => t.localId.equals(op.entityLocalId))).write(
+          const TicketAttachmentsCompanion(
+            isDeleted: Value(true),
+            syncStatus: Value(SyncStatuses.synced),
+          ),
+        );
         break;
       case 'UPLOAD_ATTACHMENT':
         final path = payload['local_file_path'] as String?;
@@ -242,14 +250,53 @@ class SyncEngine {
         if (path == null) {
           throw const ValidationFailure('Нет локального файла для загрузки');
         }
+        final filename =
+            payload['original_filename'] as String? ?? path.split('/').last;
         final form = FormData.fromMap({
-          'files': await MultipartFile.fromFile(path),
+          'files': await MultipartFile.fromFile(path, filename: filename),
         });
-        await _api.post(
+        final response = await _api.post(
           '/api/tickets/$ticketNumber/images',
           data: form,
           headers: headers,
-          options: Options(contentType: 'multipart/form-data'),
+          options: Options(
+            sendTimeout: const Duration(minutes: 5),
+            receiveTimeout: const Duration(minutes: 5),
+          ),
+        );
+        final body = response.data;
+        int? serverId;
+        if (body is Map) {
+          final uploaded = body['uploaded'];
+          if (uploaded is List && uploaded.isNotEmpty) {
+            final first = uploaded.first;
+            if (first is Map && first['id'] != null) {
+              serverId = (first['id'] as num).toInt();
+            }
+          }
+          final errors = body['errors'];
+          if (serverId == null && errors is List && errors.isNotEmpty) {
+            final err = errors.first;
+            final msg = err is Map
+                ? (err['error']?.toString() ?? 'Ошибка загрузки')
+                : 'Ошибка загрузки';
+            throw ValidationFailure(msg);
+          }
+        }
+        await (_db.update(
+          _db.ticketAttachments,
+        )..where((t) => t.localId.equals(op.entityLocalId))).write(
+          TicketAttachmentsCompanion(
+            serverId: Value(serverId),
+            downloadUrl: serverId != null
+                ? Value('/api/images/$serverId/download')
+                : const Value.absent(),
+            thumbnailUrl: serverId != null
+                ? Value('/api/images/$serverId/thumbnail')
+                : const Value.absent(),
+            syncStatus: const Value(SyncStatuses.synced),
+            localUpdatedAt: Value(DateTime.now().toUtc()),
+          ),
         );
         break;
       default:
@@ -294,6 +341,7 @@ class SyncEngine {
           );
       if (changes.isEmpty) break;
     }
+    await _db.refreshHasFilesFlags(username);
     return pulled;
   }
 
@@ -344,6 +392,15 @@ class SyncEngine {
               techConclusion: Value(data['tech_conclusion'] as String?),
               soglasovanoLine: Value(data['soglasovano_line'] as String?),
               isArchived: Value(data['is_archived'] == true),
+              isTask: data.containsKey('is_task')
+                  ? Value(data['is_task'] == true)
+                  : const Value.absent(),
+              hasFiles: data.containsKey('has_files')
+                  ? Value(data['has_files'] == true)
+                  : const Value.absent(),
+              hasComments: data.containsKey('has_comments')
+                  ? Value(data['has_comments'] == true)
+                  : const Value.absent(),
               lastUpdatedDate: Value(_parseDt(data['last_updated_date'])),
               firstReceivedDate: Value(_parseDt(data['first_received_date'])),
               completedAt: Value(_parseDt(data['completed_at'])),
@@ -391,18 +448,25 @@ class SyncEngine {
             );
       } else if (operation == 'upsert' && data != null) {
         final serverId = data['id'] as int;
+        final ticketNumber = data['ticket_number'] as String;
+        final download =
+            data['download_url'] as String? ??
+            '/api/images/$serverId/download';
+        final thumb =
+            data['thumbnail_url'] as String? ??
+            '/api/images/$serverId/thumbnail';
         await _db
             .into(_db.ticketAttachments)
             .insertOnConflictUpdate(
               TicketAttachmentsCompanion(
                 localId: Value(serverId.toString()),
                 serverId: Value(serverId),
-                ticketNumber: Value(data['ticket_number'] as String),
+                ticketNumber: Value(ticketNumber),
                 originalFilename: Value(data['original_filename'] as String?),
                 mimeType: Value(data['mime_type'] as String?),
                 fileSize: Value(data['file_size'] as int?),
-                downloadUrl: Value(data['download_url'] as String?),
-                thumbnailUrl: Value(data['thumbnail_url'] as String?),
+                downloadUrl: Value(download),
+                thumbnailUrl: Value(thumb),
                 isDeleted: const Value(false),
                 uploadedAt: Value(_parseDt(data['uploaded_at'])),
                 accountUsername: Value(username),
@@ -410,6 +474,14 @@ class SyncEngine {
                 localUpdatedAt: Value(DateTime.now().toUtc()),
               ),
             );
+        final ticket = await _db.getTicketByNumber(username, ticketNumber);
+        if (ticket != null) {
+          await (_db.update(
+            _db.tickets,
+          )..where((t) => t.localId.equals(ticket.localId))).write(
+            const TicketsCompanion(hasFiles: Value(true)),
+          );
+        }
       }
     } else if (entity == 'ticket_task' && id != null) {
       final ticket = await _db.getTicketByNumber(username, id);

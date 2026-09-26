@@ -7,6 +7,7 @@ import '../security/secure_credentials_store.dart';
 import '../sync/sync_engine.dart';
 import '../../features/auth/data/repositories/auth_repository.dart';
 import '../../features/tickets/data/repositories/tickets_repository.dart';
+import '../../features/admin/data/admin_repository.dart';
 
 final appConfigProvider = Provider<AppConfig>((ref) {
   return AppConfig.fromEnvironment();
@@ -27,7 +28,9 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     config: config,
     credentials: credentials,
     onUnauthorized: () async {
-      // Session invalidated — UI listens via auth state
+      // Откладываем, чтобы не создать цикл провайдеров в момент 401.
+      await Future<void>.delayed(Duration.zero);
+      ref.read(authControllerProvider.notifier).markNeedsReauth();
     },
   );
 });
@@ -47,10 +50,15 @@ final authRepositoryProvider = Provider<AuthRepository>((ref) {
   );
 });
 
+final adminRepositoryProvider = Provider<AdminRepository>((ref) {
+  return AdminRepository(api: ref.watch(apiClientProvider));
+});
+
 final ticketsRepositoryProvider = Provider<TicketsRepository>((ref) {
   return TicketsRepository(
     db: ref.watch(appDatabaseProvider),
     syncEngine: ref.watch(syncEngineProvider),
+    api: ref.watch(apiClientProvider),
   );
 });
 
@@ -128,6 +136,11 @@ class AuthController extends StateNotifier<AuthState> {
   Future<void> logout() async {
     await _ref.read(authRepositoryProvider).logout();
     state = const AuthState();
+  }
+
+  void markNeedsReauth() {
+    if (!state.isAuthenticated) return;
+    state = state.copyWith(needsReauth: true);
   }
 }
 

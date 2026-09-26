@@ -28,20 +28,31 @@ class ApiClient {
       ),
     );
 
+    // QueuedInterceptorsWrapper обязателен для async onRequest —
+    // иначе Authorization может не успеть попасть в заголовок.
     _dio.interceptors.add(
-      InterceptorsWrapper(
+      QueuedInterceptorsWrapper(
         onRequest: (options, handler) async {
           options.headers['X-Request-Id'] = const Uuid().v4();
-          final token = await _credentials.readToken();
-          if (token != null && token.isNotEmpty) {
-            options.headers['Authorization'] = 'Bearer $token';
+          try {
+            final token = await _credentials.readToken();
+            if (token != null && token.isNotEmpty) {
+              options.headers['Authorization'] = 'Bearer $token';
+            } else {
+              options.headers.remove('Authorization');
+            }
+          } catch (_) {
+            // Не блокируем запрос из‑за сбоя storage
           }
           handler.next(options);
         },
         onError: (error, handler) async {
           final status = error.response?.statusCode;
-          if (status == 401 && _onUnauthorized != null) {
-            await _onUnauthorized();
+          final cb = _onUnauthorized;
+          if (status == 401 && cb != null) {
+            try {
+              await cb();
+            } catch (_) {}
           }
           handler.next(error);
         },
@@ -76,6 +87,17 @@ class ApiClient {
 
   Dio get raw => _dio;
 
+  Future<Map<String, dynamic>> authHeaders([
+    Map<String, dynamic>? extra,
+  ]) async {
+    final headers = <String, dynamic>{...?extra};
+    final token = await _credentials.readToken();
+    if (token != null && token.isNotEmpty) {
+      headers['Authorization'] = 'Bearer $token';
+    }
+    return headers;
+  }
+
   Future<Response<T>> get<T>(
     String path, {
     Map<String, dynamic>? queryParameters,
@@ -85,6 +107,27 @@ class ApiClient {
       () =>
           _dio.get<T>(path, queryParameters: queryParameters, options: options),
     );
+  }
+
+  /// Скачивание бинарного файла (изображения, дампы и т.п.).
+  Future<List<int>> getBytes(String path) async {
+    final response = await _guard(
+      () => _dio.get<List<int>>(
+        path,
+        options: Options(
+          responseType: ResponseType.bytes,
+          headers: {
+            Headers.acceptHeader: '*/*',
+            Headers.contentTypeHeader: null,
+          },
+        ),
+      ),
+    );
+    final data = response.data;
+    if (data == null) {
+      throw const ServerFailure('Пустой ответ при скачивании файла');
+    }
+    return data;
   }
 
   Future<Response<T>> put<T>(
@@ -105,8 +148,15 @@ class ApiClient {
     Map<String, dynamic>? headers,
     Options? options,
   }) {
+    final mergedHeaders = <String, dynamic>{...?options?.headers, ...?headers};
+    // FormData сам выставляет multipart + boundary — не оставляем application/json.
+    if (data is FormData) {
+      mergedHeaders.remove(Headers.contentTypeHeader);
+      mergedHeaders.remove('Content-Type');
+    }
     final opts = (options ?? Options()).copyWith(
-      headers: {...?options?.headers, ...?headers},
+      headers: mergedHeaders,
+      contentType: data is FormData ? null : options?.contentType,
     );
     return _guard(() => _dio.post<T>(path, data: data, options: opts));
   }

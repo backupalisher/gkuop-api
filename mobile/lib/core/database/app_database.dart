@@ -165,15 +165,20 @@ class AppDatabase extends _$AppDatabase {
   Stream<List<Ticket>> watchTicketsForAccount(
     String username, {
     bool archived = false,
+    bool tasksOnly = false,
     String? search,
   }) {
     final q = select(tickets)
       ..where(
         (t) =>
             t.accountUsername.equals(username) &
-            t.isArchived.equals(archived) &
             t.syncStatus.isNotValue(SyncStatuses.pendingDelete),
       );
+    if (tasksOnly) {
+      q.where((t) => t.isTask.equals(true) & t.isArchived.equals(false));
+    } else {
+      q.where((t) => t.isArchived.equals(archived));
+    }
     if (search != null && search.trim().isNotEmpty) {
       final s = '%${search.trim()}%';
       q.where(
@@ -182,7 +187,8 @@ class AppDatabase extends _$AppDatabase {
             t.inventoryNumber.like(s) |
             t.component.like(s) |
             t.office.like(s) |
-            t.status.like(s),
+            t.status.like(s) |
+            t.subject.like(s),
       );
     }
     q.orderBy([(t) => OrderingTerm.desc(t.lastUpdatedDate)]);
@@ -196,5 +202,69 @@ class AppDatabase extends _$AppDatabase {
               t.ticketNumber.equals(ticketNumber),
         ))
         .getSingleOrNull();
+  }
+
+  Stream<List<TicketAttachment>> watchAttachments(
+    String username,
+    String ticketNumber,
+  ) {
+    return (select(ticketAttachments)
+          ..where(
+            (t) =>
+                t.accountUsername.equals(username) &
+                t.ticketNumber.equals(ticketNumber) &
+                t.isDeleted.equals(false),
+          )
+          ..orderBy([(t) => OrderingTerm.asc(t.uploadedAt)]))
+        .watch();
+  }
+
+  Future<int> countTickets({
+    required String username,
+    bool archived = false,
+    bool tasksOnly = false,
+  }) async {
+    final q = select(tickets)
+      ..where(
+        (t) =>
+            t.accountUsername.equals(username) &
+            t.syncStatus.isNotValue(SyncStatuses.pendingDelete),
+      );
+    if (tasksOnly) {
+      q.where((t) => t.isTask.equals(true) & t.isArchived.equals(false));
+    } else {
+      q.where((t) => t.isArchived.equals(archived));
+    }
+    final rows = await q.get();
+    return rows.length;
+  }
+
+  /// Проставляет has_files по локальным вложениям после sync pull.
+  Future<void> refreshHasFilesFlags(String username) async {
+    final withFiles =
+        await (selectOnly(ticketAttachments)
+              ..addColumns([ticketAttachments.ticketNumber])
+              ..where(
+                ticketAttachments.accountUsername.equals(username) &
+                    ticketAttachments.isDeleted.equals(false),
+              )
+              ..groupBy([ticketAttachments.ticketNumber]))
+            .map((row) => row.read(ticketAttachments.ticketNumber)!)
+            .get();
+
+    await (update(tickets)..where(
+          (t) =>
+              t.accountUsername.equals(username) & t.hasFiles.equals(true),
+        ))
+        .write(const TicketsCompanion(hasFiles: Value(false)));
+
+    for (final tn in withFiles) {
+      await (update(tickets)..where(
+            (t) =>
+                t.accountUsername.equals(username) &
+                t.ticketNumber.equals(tn),
+          ))
+          .write(const TicketsCompanion(hasFiles: Value(true)));
+    }
   }
 }

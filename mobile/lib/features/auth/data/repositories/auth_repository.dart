@@ -17,7 +17,10 @@ class AuthUser {
   final List<String> permissions;
   final List<String> offices;
 
-  bool hasPermission(String code) => permissions.contains(code);
+  bool get isAdmin => role == 'admin';
+
+  bool hasPermission(String code) =>
+      isAdmin || permissions.contains(code);
 }
 
 class AuthRepository {
@@ -61,23 +64,28 @@ class AuthRepository {
       }
     }
 
+    final role = userMap['role']?.toString() ?? 'operator';
+    final fullName = userMap['full_name'] as String?;
+    final uname = userMap['username'] as String;
+
     await _credentials.saveSession(
       token: token,
-      username: userMap['username'] as String,
+      username: uname,
+      role: role,
+      fullName: fullName,
       expiresAt: DateTime.now().toUtc().add(const Duration(hours: 24)),
     );
 
     await _db.transaction(() async {
-      await (_db.delete(_db.localPermissions)..where(
-            (p) => p.accountUsername.equals(userMap['username'] as String),
-          ))
-          .go();
+      await (_db.delete(
+        _db.localPermissions,
+      )..where((p) => p.accountUsername.equals(uname))).go();
       for (final code in permissions) {
         await _db
             .into(_db.localPermissions)
             .insert(
               LocalPermissionsCompanion.insert(
-                accountUsername: userMap['username'] as String,
+                accountUsername: uname,
                 code: code,
               ),
             );
@@ -85,9 +93,9 @@ class AuthRepository {
     });
 
     return AuthUser(
-      username: userMap['username'] as String,
-      role: userMap['role']?.toString() ?? 'operator',
-      fullName: userMap['full_name'] as String?,
+      username: uname,
+      role: role,
+      fullName: fullName,
       permissions: permissions,
       offices: offices,
     );
@@ -98,14 +106,16 @@ class AuthRepository {
     final username = await _credentials.readUsername();
     if (token == null || username == null) return null;
 
+    final role = await _credentials.readRole() ?? 'operator';
+    final fullName = await _credentials.readFullName();
     final perms = await (_db.select(
       _db.localPermissions,
     )..where((p) => p.accountUsername.equals(username))).get();
 
-    // Offline restore: достаточно локальных permissions + токен
     return AuthUser(
       username: username,
-      role: 'operator',
+      role: role,
+      fullName: fullName,
       permissions: perms.map((e) => e.code).toList(),
       offices: const [],
     );

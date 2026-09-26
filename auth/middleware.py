@@ -171,8 +171,36 @@ def _base64url_decode(data: str) -> bytes:
 # ─── Хранилище текущего пользователя в контексте запроса ────────
 
 def get_current_user(request: Request) -> Optional[User]:
-    """Получение текущего пользователя из request.state"""
-    return getattr(request.state, 'current_user', None)
+    """Получение текущего пользователя из request.state.
+
+    Fallback: если BaseHTTPMiddleware потерял request.state, повторно
+    читаем Bearer-токен из заголовка (известный дефект Starlette).
+    """
+    user = getattr(request.state, 'current_user', None)
+    if user is not None:
+        return user
+
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.startswith('Bearer '):
+        return None
+
+    token = auth_header[7:].strip()
+    if not token:
+        return None
+
+    username = verify_token(token)
+    if not username:
+        return None
+
+    auth_db: Optional[AuthDBManager] = getattr(request.app.state, 'auth_db', None)
+    if not auth_db:
+        return None
+
+    db_user = auth_db.get_user(username)
+    if db_user and db_user.is_active:
+        set_current_user(request, db_user)
+        return db_user
+    return None
 
 
 def set_current_user(request: Request, user: Optional[User]):
