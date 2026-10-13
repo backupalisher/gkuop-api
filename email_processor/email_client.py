@@ -61,6 +61,99 @@ class EmailClient:
             print(f"✗ Ошибка выбора папки {folder}: {e}")
             return False
 
+    def _imap_search(self, criteria: str, max_attempts: int = 3) -> List[bytes]:
+        """Один IMAP SEARCH с повторами. Пустой список — и при ошибке, и при нуле писем."""
+        for attempt in range(1, max_attempts + 1):
+            try:
+                status, messages = self.imap.search(None, criteria)
+                if status == 'OK':
+                    return messages[0].split() if messages and messages[0] else []
+
+                print(
+                    f"✗ Ошибка поиска писем (попытка {attempt}/{max_attempts}): "
+                    f"status={status}, criteria={criteria!r}, response={messages!r}"
+                )
+            except Exception as e:
+                print(
+                    f"✗ Ошибка при поиске (попытка {attempt}/{max_attempts}, "
+                    f"criteria={criteria!r}): {e}"
+                )
+
+            if attempt < max_attempts:
+                time.sleep(0.5 * attempt)
+
+        return []
+
+    def _decode_from_header(self, header_value: str) -> str:
+        """Декодирует заголовок From для сравнения с фильтром отправителя."""
+        if not header_value:
+            return ""
+        try:
+            decoded_parts = decode_header(header_value)
+            result = ""
+            for content, encoding in decoded_parts:
+                if isinstance(content, bytes):
+                    result += content.decode(encoding or "utf-8", errors="ignore")
+                else:
+                    result += str(content)
+            return result
+        except Exception:
+            return str(header_value)
+
+    def _peek_from_address(self, email_id: bytes) -> str:
+        """Читает только заголовок From, не помечая письмо прочитанным."""
+        try:
+            status, msg_data = self.imap.fetch(
+                email_id, "(BODY.PEEK[HEADER.FIELDS (FROM)])"
+            )
+            if status != "OK" or not msg_data:
+                return ""
+            raw = b""
+            for part in msg_data:
+                if isinstance(part, tuple) and len(part) > 1 and isinstance(part[1], bytes):
+                    raw += part[1]
+            header = email.message_from_bytes(raw)
+            return self._decode_from_header(header.get("From", ""))
+        except Exception as exc:
+            print(f"✗ Не удалось прочитать From у письма {email_id}: {exc}")
+            return ""
+
+    def _messages_missing_from_index(
+        self,
+        from_filter: str,
+        matched_ids: List[bytes],
+    ) -> List[bytes]:
+        """
+        Добрать письма, которые Яндекс ещё не включил в индекс FROM.
+
+        Индекс отстаёт на новые письма: SINCE их видит, FROM — нет,
+        хотя заголовок From совпадает. Хвост после последнего совпадения
+        короткий, поэтому From проверяется уже по заголовку.
+        """
+        if self.imap is None or not from_filter:
+            return []
+
+        if matched_ids:
+            try:
+                last_seq = max(int(item) for item in matched_ids)
+            except ValueError:
+                return []
+            tail_criteria = f"{last_seq + 1}:*"
+        else:
+            return []
+
+        tail_ids = self._imap_search(tail_criteria)
+        if not tail_ids:
+            return []
+
+        needle = from_filter.lower()
+        matched: List[bytes] = []
+        for email_id in tail_ids:
+            sender = self._peek_from_address(email_id)
+            if needle in sender.lower():
+                matched.append(email_id)
+        return matched
+
     def search_emails(
         self,
         subject_filters: Optional[list] = None,
@@ -79,29 +172,30 @@ class EmailClient:
             criteria_parts.append(f'(SINCE "{date_str}")')
 
         criteria = ' '.join(criteria_parts) if criteria_parts else 'ALL'
+        email_ids = self._imap_search(criteria, max_attempts)
 
-        for attempt in range(1, max_attempts + 1):
-            try:
-                status, messages = self.imap.search(None, criteria)
-                if status == 'OK':
-                    email_ids = messages[0].split() if messages[0] else []
-                    print(f"✓ Найдено писем: {len(email_ids)}")
-                    return email_ids
+        extra_ids: List[bytes] = []
+        if from_filter and since_date:
+            # Яндекс не включает свежие письма в индекс FROM: выборка только
+            # по дате их видит, пересечение FROM+SINCE — нет.
+            since_ids = self._imap_search(f'(SINCE "{date_str}")', max_attempts)
+            known = set(email_ids)
+            candidates = [item for item in since_ids if item not in known]
+            needle = from_filter.lower()
+            extra_ids = [
+                item for item in candidates
+                if needle in self._peek_from_address(item).lower()
+            ]
+        elif from_filter:
+            extra_ids = self._messages_missing_from_index(from_filter, email_ids)
 
-                print(
-                    f"✗ Ошибка поиска писем (попытка {attempt}/{max_attempts}): "
-                    f"status={status}, criteria={criteria!r}, response={messages!r}"
-                )
-            except Exception as e:
-                print(
-                    f"✗ Ошибка при поиске (попытка {attempt}/{max_attempts}, "
-                    f"criteria={criteria!r}): {e}"
-                )
+        if extra_ids:
+            known = set(email_ids)
+            email_ids = email_ids + [item for item in extra_ids if item not in known]
+            print(f"✓ Писем вне индекса FROM: {len(extra_ids)}")
 
-            if attempt < max_attempts:
-                time.sleep(0.5 * attempt)
-
-        return []
+        print(f"✓ Найдено писем: {len(email_ids)}")
+        return email_ids
 
     def fetch_email(self, email_id: bytes) -> Optional[Message]:
         """Получение письма по ID"""

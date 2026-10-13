@@ -365,7 +365,10 @@ def _signal_handler(signum: int, frame):
             return
         _shutdown_in_progress = True
 
-    signal_name = signal.Signals(signum).name if signum in signal.Signals else str(signum)
+    try:
+        signal_name = signal.Signals(signum).name
+    except (ValueError, TypeError):
+        signal_name = str(signum)
     logger.warning(f"Получен сигнал: {signal_name} ({signum})")
 
     # Определяем, ручная ли это остановка (проверяем флаг и маркерный файл)
@@ -462,7 +465,10 @@ def _fatal_signal_handler(signum: int, frame):
             return
         _shutdown_in_progress = True
 
-    signal_name = signal.Signals(signum).name if signum in signal.Signals else str(signum)
+    try:
+        signal_name = signal.Signals(signum).name
+    except (ValueError, TypeError):
+        signal_name = str(signum)
 
     # Пытаемся получить стек из фрейма
     stack_str = ""
