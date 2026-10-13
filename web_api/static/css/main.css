@@ -4213,13 +4213,17 @@ td {
 
   .action-buttons.action-buttons-compact .btn-action,
   .action-buttons.action-buttons-compact .btn-complete {
-    flex: 1 1 auto;
+    flex: 0 1 auto;
     flex-shrink: 1;
     width: auto;
     min-width: 0;
-    max-width: 100%;
+    max-width: 46%;
     overflow: hidden;
     text-overflow: ellipsis;
+    padding: 4px 8px;
+    font-size: var(--font-size-xs);
+    line-height: 1.15;
+    min-height: 30px;
   }
 }
 

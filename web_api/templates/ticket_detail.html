@@ -23,6 +23,26 @@
         .card { margin-top: 0 !important; }
         .action-buttons .btn-back { display: none !important; }
         .loading-overlay { z-index: 999999 !important; }
+        .container,
+        .card,
+        .action-buttons {
+            max-width: 100%;
+            min-width: 0;
+            box-sizing: border-box;
+        }
+        .card { overflow-x: hidden; }
+        @media (max-width: 480px) {
+            .card { padding: 12px 10px !important; }
+            .action-buttons.action-buttons-compact .btn-complete,
+            .action-buttons.action-buttons-compact .btn-restore {
+                padding: 4px 8px !important;
+                font-size: 12px !important;
+                line-height: 1.15 !important;
+                min-height: 30px !important;
+                max-width: 46%;
+                flex: 0 1 auto !important;
+            }
+        }
     </style>
     {% endif %}
 
