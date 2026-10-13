@@ -39,6 +39,52 @@ class EmailParser:
             return str(header_value)
 
     @staticmethod
+    def _decode_payload(payload: bytes, charset: Optional[str]) -> str:
+        """Декодирует тело письма по charset. Пустой utf-8 заменяется на cp1251."""
+        if not payload:
+            return ""
+
+        def _try_decode(encoding: str) -> str:
+            normalized = encoding.strip().lower().replace("_", "-")
+            aliases = {
+                "windows-1251": "cp1251",
+                "win-1251": "cp1251",
+                "x-cp1251": "cp1251",
+            }
+            name = aliases.get(normalized, normalized)
+            try:
+                return payload.decode(name)
+            except (LookupError, UnicodeDecodeError):
+                return ""
+
+        primary = (charset or "utf-8").strip() or "utf-8"
+        text = _try_decode(primary)
+        if text.strip():
+            return text
+
+        primary_norm = primary.lower().replace("_", "-")
+        if primary_norm not in ("cp1251", "windows-1251", "win-1251", "x-cp1251"):
+            fallback = _try_decode("cp1251")
+            if fallback.strip():
+                return fallback
+
+        return payload.decode("utf-8", errors="ignore")
+
+    @staticmethod
+    def _part_text(part: Message) -> str:
+        """Текст одной MIME-части с учётом Content-Type charset."""
+        payload = part.get_payload(decode=True)
+        if isinstance(payload, bytes) and payload:
+            charset: Optional[str] = None
+            try:
+                charset = part.get_content_charset()
+            except Exception:
+                charset = None
+            return EmailParser._decode_payload(payload, charset)
+        raw = part.get_payload(decode=False)
+        return raw if isinstance(raw, str) else ""
+
+    @staticmethod
     def get_email_body(email_message: Message) -> Dict[str, str]:
         """Извлечение тела письма"""
         body_text = ""
@@ -48,17 +94,11 @@ class EmailParser:
             for part in email_message.walk():
                 content_type = part.get_content_type()
                 if content_type == "text/plain":
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        body_text = payload.decode('utf-8', errors='ignore')
+                    body_text = EmailParser._part_text(part) or body_text
                 elif content_type == "text/html":
-                    payload = part.get_payload(decode=True)
-                    if payload:
-                        body_html = payload.decode('utf-8', errors='ignore')
+                    body_html = EmailParser._part_text(part) or body_html
         else:
-            payload = email_message.get_payload(decode=True)
-            if payload:
-                body_text = payload.decode('utf-8', errors='ignore')
+            body_text = EmailParser._part_text(email_message)
 
         # Если есть HTML, но нет текста, извлекаем текст из HTML
         if body_html and not body_text:
@@ -367,13 +407,17 @@ class EmailParser:
         return result
 
     def get_skip_reason(self, email_message: Message) -> Optional[str]:
-        """Возвращает причину пропуска письма или None, если письмо подходит."""
+        """Возвращает причину пропуска письма или None, если письмо подходит.
+
+        Письмо с номером заявки в теме всегда разбирается: фильтр категории
+        отсекает только уведомления без ``#номер``.
+        """
         subject = self.decode_header_value(email_message.get('Subject', ''))
+        if self.extract_ticket_id(subject):
+            return None
         if not any(filter_value in subject for filter_value in self.subject_filters):
             return 'subject_filter'
-        if not self.extract_ticket_id(subject):
-            return 'no_ticket_id'
-        return None
+        return 'no_ticket_id'
 
     def parse_email_detailed(self, email_message: Message) -> Tuple[Optional[Dict], Optional[str]]:
         """

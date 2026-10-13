@@ -20,13 +20,18 @@ class SecureCredentialsStore {
   static const _tokenExpKey = 'auth_token_exp';
   static const _roleKey = 'auth_role';
   static const _fullNameKey = 'auth_full_name';
+  static const _savedLoginKey = 'saved_login';
+  static const _savedPasswordKey = 'saved_password';
 
   String? _cachedToken;
   String? _cachedUsername;
   String? _cachedRole;
   String? _cachedFullName;
   DateTime? _cachedExpiresAt;
+  String? _cachedSavedLogin;
+  String? _cachedSavedPassword;
   bool _memoryHydrated = false;
+  bool _savedHydrated = false;
 
   Future<void> saveSession({
     required String token,
@@ -115,7 +120,42 @@ class SecureCredentialsStore {
   bool get hasCachedToken =>
       _cachedToken != null && _cachedToken!.isNotEmpty;
 
-  Future<void> clear() async {
+  Future<void> saveSavedCredentials({
+    required String login,
+    required String password,
+  }) async {
+    _cachedSavedLogin = login;
+    _cachedSavedPassword = password;
+    _savedHydrated = true;
+    await _storage.write(key: _savedLoginKey, value: login);
+    await _storage.write(key: _savedPasswordKey, value: password);
+  }
+
+  Future<({String? login, String? password})> readSavedCredentials() async {
+    if (!_savedHydrated) {
+      _cachedSavedLogin = await _storage.read(key: _savedLoginKey);
+      _cachedSavedPassword = await _storage.read(key: _savedPasswordKey);
+      _savedHydrated = true;
+    }
+    return (login: _cachedSavedLogin, password: _cachedSavedPassword);
+  }
+
+  Future<void> updateToken({
+    required String token,
+    required DateTime expiresAt,
+  }) async {
+    _cachedToken = token;
+    _cachedExpiresAt = expiresAt.toUtc();
+    _memoryHydrated = true;
+    await _storage.write(key: _tokenKey, value: token);
+    await _storage.write(
+      key: _tokenExpKey,
+      value: expiresAt.toUtc().toIso8601String(),
+    );
+  }
+
+  /// Сбрасывает токен сессии и оставляет логин с паролем для повторного входа.
+  Future<void> clearSession() async {
     _cachedToken = null;
     _cachedUsername = null;
     _cachedRole = null;
@@ -127,5 +167,14 @@ class SecureCredentialsStore {
     await _storage.delete(key: _tokenExpKey);
     await _storage.delete(key: _roleKey);
     await _storage.delete(key: _fullNameKey);
+  }
+
+  Future<void> clear() async {
+    _cachedSavedLogin = null;
+    _cachedSavedPassword = null;
+    _savedHydrated = true;
+    await clearSession();
+    await _storage.delete(key: _savedLoginKey);
+    await _storage.delete(key: _savedPasswordKey);
   }
 }

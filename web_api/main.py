@@ -2113,6 +2113,8 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
                 "message": "Новых писем не найдено",
                 "result": {
                     "processed": 0,
+                    "created": 0,
+                    "updated": 0,
                     "errors": 0,
                     "skipped": 0,
                     "no_emails_found": True,
@@ -2140,6 +2142,8 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
             progress_callback=_update_progress,
         )
         processed = batch_result['processed']
+        created = batch_result['created']
+        updated = batch_result['updated']
         errors = batch_result['errors']
         skipped = batch_result['skipped']
         skip_details = batch_result['skip_details']
@@ -2208,10 +2212,19 @@ def _run_rebuild_background(since_date_override: Optional[datetime] = None):
         _rebuild_progress.update({
             "running": False,
             "status": "completed",
+            "processed": processed,
+            "created": created,
+            "updated": updated,
             "skipped": skipped,
-            "message": f"Обработано: {processed}, Пропущено: {skipped}, Ошибок: {errors}",
+            "errors": errors,
+            "message": (
+                f"Создано: {created}, Обновлено: {updated}, "
+                f"Пропущено: {skipped}, Ошибок: {errors}"
+            ),
             "result": {
                 "processed": processed,
+                "created": created,
+                "updated": updated,
                 "errors": errors,
                 "skipped": skipped,
                 "skip_details": skip_details[:20],

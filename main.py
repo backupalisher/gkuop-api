@@ -142,12 +142,15 @@ class EmailParserApplication:
             email_ids,
         )
         processed = batch_result['processed']
+        created = batch_result['created']
+        updated = batch_result['updated']
         errors = batch_result['errors']
         skipped = batch_result['skipped']
 
         logger.info(
-            "Обработка завершена. Обработано: %s, Пропущено: %s, Ошибок: %s",
-            processed,
+            "Обработка завершена. Создано: %s, Обновлено: %s, Пропущено: %s, Ошибок: %s",
+            created,
+            updated,
             skipped,
             errors,
         )

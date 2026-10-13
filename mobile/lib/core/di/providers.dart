@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../app/config/app_config.dart';
 import '../database/app_database.dart';
+import '../errors/failures.dart';
 import '../network/api_client.dart';
 import '../security/secure_credentials_store.dart';
 import '../sync/sync_engine.dart';
@@ -30,7 +31,7 @@ final apiClientProvider = Provider<ApiClient>((ref) {
     onUnauthorized: () async {
       // Откладываем, чтобы не создать цикл провайдеров в момент 401.
       await Future<void>.delayed(Duration.zero);
-      ref.read(authControllerProvider.notifier).markNeedsReauth();
+      await ref.read(authControllerProvider.notifier).markNeedsReauth();
     },
   );
 });
@@ -105,6 +106,8 @@ class AuthController extends StateNotifier<AuthState> {
       final user = await _ref.read(authRepositoryProvider).restoreSession();
       state = AuthState(user: user, isLoading: false);
       if (user != null) {
+        await refreshIfExpiring();
+        if (!state.isAuthenticated) return;
         // ignore: unawaited_futures
         _ref
             .read(syncEngineProvider)
@@ -138,8 +141,24 @@ class AuthController extends StateNotifier<AuthState> {
     state = const AuthState();
   }
 
-  void markNeedsReauth() {
+  Future<void> refreshIfExpiring() async {
     if (!state.isAuthenticated) return;
+    final expiresAt = await _ref
+        .read(credentialsStoreProvider)
+        .readExpiresAt();
+    if (expiresAt == null) return;
+    final remaining = expiresAt.difference(DateTime.now().toUtc());
+    if (remaining > const Duration(hours: 2)) return;
+    try {
+      await _ref.read(authRepositoryProvider).refreshSession();
+    } on AuthenticationFailure {
+      await markNeedsReauth();
+    } catch (_) {}
+  }
+
+  Future<void> markNeedsReauth() async {
+    if (!state.isAuthenticated) return;
+    await _ref.read(credentialsStoreProvider).clearSession();
     state = state.copyWith(needsReauth: true);
   }
 }

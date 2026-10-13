@@ -74,9 +74,12 @@ def process_email_messages(
     Обрабатывает список IMAP UID с аудитом пропусков.
 
     Returns:
-        dict с ключами processed, errors, skipped, skip_details, received_dates
+        dict с ключами processed, created, updated, errors, skipped,
+        skip_details, received_dates
     """
     processed = 0
+    created = 0
+    updated = 0
     errors = 0
     skipped = 0
     skip_details: List[Dict[str, str]] = []
@@ -115,8 +118,13 @@ def process_email_messages(
                 progress_callback(idx, total, processed, errors, skipped)
             continue
 
-        if ticket_processor.process_email(email_data):
+        outcome = ticket_processor.process_email(email_data)
+        if outcome in ("created", "updated"):
             processed += 1
+            if outcome == "created":
+                created += 1
+            else:
+                updated += 1
             received_date = normalize_email_datetime(email_data.get('received_date'))
             if received_date:
                 received_dates.append(received_date)
@@ -140,6 +148,8 @@ def process_email_messages(
 
     return {
         'processed': processed,
+        'created': created,
+        'updated': updated,
         'errors': errors,
         'skipped': skipped,
         'skip_details': skip_details,

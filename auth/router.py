@@ -85,6 +85,20 @@ async def api_login_new(request: Request):
     }
 
 
+@router.post("/refresh")
+async def api_refresh_token(request: Request):
+    """Выдаёт новый токен на 24 часа по действующему токену."""
+    user = get_current_user(request)
+    if not user or not user.is_active:
+        return JSONResponse(
+            {"status": "error", "message": "Не аутентифицирован"},
+            status_code=401,
+        )
+
+    token = create_token(user.username)
+    return {"status": "ok", "token": token}
+
+
 @router.get("/me")
 async def api_get_current_user(request: Request):
     """Получение информации о текущем аутентифицированном пользователе"""

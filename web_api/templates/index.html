@@ -431,7 +431,10 @@
 
             const modal = document.createElement('div');
             modal.className = 'modal-content';
-            modal.style.maxWidth = '1100px';
+            modal.style.width = 'min(1100px, calc(100vw - 16px))';
+            modal.style.maxWidth = '100%';
+            modal.style.minWidth = '0';
+            modal.style.boxSizing = 'border-box';
             modal.style.maxHeight = '86vh';
             modal.style.height = '86vh';
             modal.style.padding = '0';
@@ -443,6 +446,10 @@
             header.style.display = 'flex';
             header.style.alignItems = 'center';
             header.style.justifyContent = 'space-between';
+            header.style.gap = '8px';
+            header.style.minWidth = '0';
+            header.style.maxWidth = '100%';
+            header.style.boxSizing = 'border-box';
             header.style.padding = '12px 16px';
             header.style.borderBottom = '1px solid var(--color-border)';
             header.style.background = 'var(--color-surface)';
@@ -451,11 +458,17 @@
             title.style.fontSize = 'var(--font-size-lg)';
             title.style.fontWeight = 'var(--font-weight-semibold)';
             title.style.color = 'var(--color-text)';
+            title.style.flex = '1';
+            title.style.minWidth = '0';
+            title.style.overflow = 'hidden';
+            title.style.textOverflow = 'ellipsis';
+            title.style.whiteSpace = 'nowrap';
             title.textContent = `Заявка #${ticketNumber}`;
 
             const closeBtn = document.createElement('button');
             closeBtn.className = 'btn btn-ghost';
             closeBtn.textContent = '✕';
+            closeBtn.style.flexShrink = '0';
             closeBtn.setAttribute('aria-label', 'Закрыть');
             closeBtn.onclick = closeTicketModal;
 
@@ -466,6 +479,7 @@
             iframe.title = `Заявка #${ticketNumber}`;
             iframe.style.border = '0';
             iframe.style.width = '100%';
+            iframe.style.minWidth = '0';
             iframe.style.flex = '1';
             iframe.style.background = 'transparent';
             iframe.referrerPolicy = 'same-origin';
@@ -1323,22 +1337,34 @@
                     _rebuildPollTimer = setTimeout(pollRebuildStatus, 2000);
                 } else if (status.status === 'completed') {
                     hideRebuildProgress();
-                    const processed = status.processed || (status.result && status.result.processed) || 0;
-                    const skipped = status.skipped || (status.result && status.result.skipped) || 0;
-                    const errors = status.errors || (status.result && status.result.errors) || 0;
+                    const result = status.result || {};
+                    const noEmails = result.no_emails_found === true;
+                    const created = status.created || result.created || 0;
+                    const updated = status.updated || result.updated || 0;
+                    const skipped = status.skipped || result.skipped || 0;
+                    const errors = status.errors || result.errors || 0;
+                    const skipDetails = Array.isArray(result.skip_details) ? result.skip_details : [];
+                    const skipReasonLabels = {
+                        no_ticket_id: 'нет номера заявки',
+                        subject_filter: 'тема не относится к заявкам',
+                        parse_error: 'ошибка разбора письма',
+                    };
+                    const reasonText = [...new Set(skipDetails.map((item) => {
+                        const code = item && item.reason;
+                        return skipReasonLabels[code] || code;
+                    }).filter(Boolean))].join(', ');
                     let toastMessage = '✓ Данные успешно обновлены';
                     let toastType = 'success';
-                    if (processed === 0 && errors === 0) {
+                    if (noEmails || (created === 0 && updated === 0 && skipped === 0 && errors === 0)) {
                         toastMessage = 'Новых писем не найдено. Данные в системе актуальны.';
                         toastType = 'warning';
-                    } else if (errors > 0) {
-                        toastMessage = `Обновление завершено с ошибками: ${errors}`;
-                        toastType = 'warning';
-                    } else if (skipped > 0) {
-                        toastMessage = `✓ Обработано писем: ${processed}. Пропущено: ${skipped}`;
-                        toastType = 'warning';
                     } else {
-                        toastMessage = `✓ Обработано писем: ${processed}`;
+                        const reasonSuffix = skipped > 0 && reasonText ? ` (${reasonText})` : '';
+                        toastMessage = `Создано: ${created}. Обновлено: ${updated}. Пропущено: ${skipped}${reasonSuffix}`;
+                        if (errors > 0) {
+                            toastMessage += `. Ошибок: ${errors}`;
+                        }
+                        toastType = (errors > 0 || (skipped > 0 && created === 0)) ? 'warning' : 'success';
                     }
                     showToast(toastMessage, toastType);
                     document.getElementById('errorMsg').style.display = 'none';

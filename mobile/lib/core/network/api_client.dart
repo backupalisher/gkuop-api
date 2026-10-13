@@ -15,18 +15,20 @@ class ApiClient {
     OnUnauthorized? onUnauthorized,
   }) : _credentials = credentials,
        _onUnauthorized = onUnauthorized {
-    _dio = Dio(
-      BaseOptions(
-        baseUrl: config.apiBaseUrl,
-        connectTimeout: const Duration(seconds: 20),
-        receiveTimeout: const Duration(seconds: 60),
-        sendTimeout: const Duration(seconds: 120),
-        headers: {
-          'Accept': 'application/json',
-          'Content-Type': 'application/json',
-        },
-      ),
+    final baseOptions = BaseOptions(
+      baseUrl: config.apiBaseUrl,
+      connectTimeout: const Duration(seconds: 20),
+      receiveTimeout: const Duration(seconds: 60),
+      sendTimeout: const Duration(seconds: 120),
+      headers: {
+        'Accept': 'application/json',
+        'Content-Type': 'application/json',
+      },
     );
+    _dio = Dio(baseOptions);
+    // Отдельный клиент без очереди: повтор и refresh из onError
+    // не должны ждать тот же QueuedInterceptor.
+    _plain = Dio(baseOptions);
 
     // QueuedInterceptorsWrapper обязателен для async onRequest —
     // иначе Authorization может не успеть попасть в заголовок.
@@ -47,13 +49,53 @@ class ApiClient {
           handler.next(options);
         },
         onError: (error, handler) async {
-          final status = error.response?.statusCode;
-          final cb = _onUnauthorized;
-          if (status == 401 && cb != null) {
-            try {
-              await cb();
-            } catch (_) {}
+          if (error.response?.statusCode != 401 || _skipAuthRecovery(error)) {
+            handler.next(error);
+            return;
           }
+
+          error.requestOptions.extra['auth_retried'] = true;
+          final header =
+              error.requestOptions.headers['Authorization']?.toString() ?? '';
+          final missingToken =
+              !header.startsWith('Bearer ') || header.trim() == 'Bearer';
+
+          if (missingToken) {
+            final token = await _credentials.readToken();
+            if (token != null && token.isNotEmpty) {
+              try {
+                final response = await _sendWithToken(
+                  error.requestOptions,
+                  token,
+                );
+                handler.resolve(response);
+                return;
+              } on DioException catch (retryError) {
+                if (retryError.response?.statusCode != 401) {
+                  handler.next(retryError);
+                  return;
+                }
+              }
+            }
+          }
+
+          final refreshed = await _refreshAccessToken();
+          if (refreshed != null) {
+            try {
+              final response = await _sendWithToken(
+                error.requestOptions,
+                refreshed,
+              );
+              handler.resolve(response);
+              return;
+            } on DioException catch (retryError) {
+              handler.next(retryError);
+              await _notifyUnauthorized();
+              return;
+            }
+          }
+
+          await _notifyUnauthorized();
           handler.next(error);
         },
       ),
@@ -82,8 +124,62 @@ class ApiClient {
   }
 
   late final Dio _dio;
+  late final Dio _plain;
   final SecureCredentialsStore _credentials;
   final OnUnauthorized? _onUnauthorized;
+
+  bool _skipAuthRecovery(DioException error) {
+    final extra = error.requestOptions.extra;
+    if (extra['auth_retried'] == true || extra['skip_auth_recovery'] == true) {
+      return true;
+    }
+    final path = error.requestOptions.uri.path;
+    return path.endsWith('/api/auth/login') ||
+        path.endsWith('/api/auth/login-new') ||
+        path.endsWith('/api/auth/refresh');
+  }
+
+  Future<Response<dynamic>> _sendWithToken(
+    RequestOptions request,
+    String token,
+  ) {
+    request.headers['Authorization'] = 'Bearer $token';
+    return _plain.fetch(request);
+  }
+
+  Future<String?> _refreshAccessToken() async {
+    final current = await _credentials.readToken();
+    if (current == null || current.isEmpty) return null;
+    try {
+      final response = await _plain.post<dynamic>(
+        '/api/auth/refresh',
+        options: Options(
+          headers: {'Authorization': 'Bearer $current'},
+        ),
+      );
+      final data = response.data;
+      if (data is Map && data['token'] is String) {
+        final token = data['token'] as String;
+        if (token.isEmpty) return null;
+        await _credentials.updateToken(
+          token: token,
+          expiresAt: DateTime.now().toUtc().add(const Duration(hours: 24)),
+        );
+        return token;
+      }
+    } on DioException {
+      return null;
+    }
+    return null;
+  }
+
+  Future<void> _notifyUnauthorized() async {
+    final cb = _onUnauthorized;
+    if (cb == null) return;
+    try {
+      await cb();
+    } catch (_) {}
+  }
 
   Dio get raw => _dio;
 

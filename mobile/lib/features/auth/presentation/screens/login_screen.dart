@@ -18,6 +18,27 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   bool _obscure = true;
 
   @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadSavedCredentials();
+    });
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    final saved = await ref
+        .read(credentialsStoreProvider)
+        .readSavedCredentials();
+    if (!mounted) return;
+    if (saved.login != null && saved.login!.isNotEmpty) {
+      _loginCtrl.text = saved.login!;
+    }
+    if (saved.password != null && saved.password!.isNotEmpty) {
+      _passwordCtrl.text = saved.password!;
+    }
+  }
+
+  @override
   void dispose() {
     _loginCtrl.dispose();
     _passwordCtrl.dispose();

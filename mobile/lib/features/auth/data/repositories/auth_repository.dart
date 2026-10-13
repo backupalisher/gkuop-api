@@ -75,6 +75,7 @@ class AuthRepository {
       fullName: fullName,
       expiresAt: DateTime.now().toUtc().add(const Duration(hours: 24)),
     );
+    await _credentials.saveSavedCredentials(login: uname, password: password);
 
     await _db.transaction(() async {
       await (_db.delete(
@@ -121,9 +122,21 @@ class AuthRepository {
     );
   }
 
+  Future<void> refreshSession() async {
+    final response = await _api.post('/api/auth/refresh');
+    final body = response.data;
+    if (body is! Map || body['status'] != 'ok' || body['token'] is! String) {
+      throw Exception('Не удалось обновить сессию');
+    }
+    await _credentials.updateToken(
+      token: body['token'] as String,
+      expiresAt: DateTime.now().toUtc().add(const Duration(hours: 24)),
+    );
+  }
+
   Future<void> logout({bool clearCredentials = true}) async {
     if (clearCredentials) {
-      await _credentials.clear();
+      await _credentials.clearSession();
     }
   }
 }

@@ -2,7 +2,9 @@
 Обработчик заявок и комментариев
 """
 import re
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
+
+EmailProcessResult = Literal["created", "updated", "error"]
 from datetime import datetime
 from database.models import Ticket, TicketComment, TicketHistoryRecord
 from database.db_manager import DatabaseManager
@@ -480,16 +482,19 @@ class TicketProcessor:
             print(f"✗ Ошибка обработки существующей заявки: {e}")
             return False
 
-    def process_email(self, email_data: Dict) -> bool:
-        """Основная логика обработки письма"""
+    def process_email(self, email_data: Dict) -> EmailProcessResult:
+        """Создаёт новую заявку или обновляет существующую."""
         if not email_data or 'ticket_number' not in email_data:
-            return False
+            return "error"
 
         ticket_number = email_data['ticket_number']
 
-        # Проверяем существование заявки
         if self.db.ticket_exists(ticket_number):
             existing_ticket = self.db.get_ticket(ticket_number)
-            return self.process_existing_ticket(existing_ticket, email_data)
-        else:
-            return self.process_new_ticket(email_data)
+            if self.process_existing_ticket(existing_ticket, email_data):
+                return "updated"
+            return "error"
+
+        if self.process_new_ticket(email_data):
+            return "created"
+        return "error"

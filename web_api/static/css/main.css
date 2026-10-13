@@ -3953,6 +3953,8 @@ td {
   gap: var(--space-2);
   align-items: center;
   width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .action-buttons-compact .btn-action {
@@ -4193,15 +4195,31 @@ td {
 @media (max-width: 480px) {
   .action-buttons.action-buttons-compact {
     flex-direction: row;
+    flex-wrap: nowrap;
     align-items: center;
     justify-content: space-between;
     gap: var(--space-2);
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
   }
 
-  .action-buttons.action-buttons-compact .btn-action {
+  .action-buttons.action-buttons-compact .action-buttons-left,
+  .action-buttons.action-buttons-compact .action-buttons-right {
+    min-width: 0;
+    max-width: 100%;
+    flex-shrink: 1;
+  }
+
+  .action-buttons.action-buttons-compact .btn-action,
+  .action-buttons.action-buttons-compact .btn-complete {
+    flex: 1 1 auto;
+    flex-shrink: 1;
     width: auto;
     min-width: 0;
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 }
 

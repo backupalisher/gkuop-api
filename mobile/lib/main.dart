@@ -19,11 +19,35 @@ Future<void> main() async {
   );
 }
 
-class GkuopApp extends ConsumerWidget {
+class GkuopApp extends ConsumerStatefulWidget {
   const GkuopApp({super.key});
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<GkuopApp> createState() => _GkuopAppState();
+}
+
+class _GkuopAppState extends ConsumerState<GkuopApp> with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.read(authControllerProvider.notifier).refreshIfExpiring();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final router = ref.watch(goRouterProvider);
     final themeMode = ref.watch(themeControllerProvider);
     return MaterialApp.router(
