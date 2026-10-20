@@ -73,6 +73,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
     final async = ref.watch(ticketProvider(widget.ticketNumber));
     final auth = ref.watch(authControllerProvider);
     final canEdit = auth.user?.hasPermission('edit_tickets') ?? false;
+    final canManageTasks = auth.user?.hasPermission('manage_tasks') ?? false;
     final canComplete = auth.user?.hasPermission('complete_tickets') ?? false;
     final canComment = auth.user?.hasPermission('add_comments') ?? false;
     final canUpload = auth.user?.hasPermission('upload_images') ?? false;
@@ -123,8 +124,15 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _tile(context, 'Комплектующее', t.component, pill: true),
+                      _tile(
+                        context,
+                        'Аппарат',
+                        (t.equipmentLabel != null &&
+                                t.equipmentLabel!.trim().isNotEmpty)
+                            ? t.equipmentLabel
+                            : t.printerModel,
+                      ),
                       _tile(context, 'Инвентарный номер', t.inventoryNumber),
-                      _tile(context, 'Оборудование', t.printerModel),
                       _tile(context, 'Офис', t.office),
                       _tile(context, 'Кабинет', t.cabinet),
                       _tile(context, 'Требуется', t.requiredAction),
@@ -182,6 +190,22 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                   },
                   child: const Text('✓ Выполнено'),
                 ),
+              if (canManageTasks) ...[
+                const SizedBox(height: 10),
+                OutlinedButton(
+                  onPressed: () async {
+                    await ref.read(ticketsRepositoryProvider).setTask(
+                          username: auth.user!.username,
+                          ticketNumber: widget.ticketNumber,
+                          isTask: !t.isTask,
+                        );
+                    ref.invalidate(ticketProvider(widget.ticketNumber));
+                  },
+                  child: Text(
+                    t.isTask ? 'Убрать из задач' : 'Добавить в задачи',
+                  ),
+                ),
+              ],
               if (canComment) ...[
                 const SizedBox(height: 10),
                 OutlinedButton(

@@ -34,6 +34,9 @@
                     <a href="#" class="nav-link" data-page="users" data-role="admin" onclick="event.preventDefault(); toggleHamburgerMenu(); openUsersModal();">
                         <span class="menu-icon" aria-hidden="true">Users</span> Пользователи
                     </a>
+                    <a href="/equipment" class="nav-link" data-role="admin">
+                        <span class="menu-icon" aria-hidden="true">Print</span> Аппараты
+                    </a>
                     <a href="#" class="nav-link" data-permission="rebuild_data" onclick="refreshData(); toggleHamburgerMenu();">
                         <span class="menu-icon" aria-hidden="true">Sync</span> Обновить данные
                     </a>
@@ -82,7 +85,7 @@
         <div class="filters">
             <div class="search-wrap">
                 <input type="text" class="input" id="searchInput"
-                    placeholder="Поиск: № заявки, инв. номер (в т.ч. по последним цифрам), тема, автор, устройство..." />
+                    placeholder="Поиск: № заявки, серийный, инв. номер (в т.ч. последние 4–5 цифр), тема..." />
                 <button class="search-btn" onclick="onSearchNow()" title="Найти">🔍</button>
             </div>
         </div>
@@ -115,7 +118,7 @@
                     <tr>
                         <th onclick="sortBy('ticket_number')">№ заявки <span class="arrow" id="arr-ticket_number"></span></th>
                         <th onclick="sortBy('status')">Статус <span class="arrow" id="arr-status"></span></th>
-                        <th onclick="sortBy('inventory_number')">Инв. номер <span class="arrow" id="arr-inventory_number"></span></th>
+                        <th onclick="sortBy('inventory_number')">Аппарат <span class="arrow" id="arr-inventory_number"></span></th>
                         <th>Требуется</th>
                         <th>Комплектующее</th>
                         <th>Кабинет</th>
@@ -1201,7 +1204,9 @@
                         const ticketUrl = encodeURIComponent(ticketNumberRaw);
                         const ticketJs = escapeJsSingleQuoted(ticketNumberRaw);
                         const statusText = escapeHtml(t.status || '—');
-                        const inventoryNumber = listValue(t.inventory_number);
+                        const inventoryNumber = (t.equipment_label && String(t.equipment_label).trim())
+                            ? escapeHtml(String(t.equipment_label).trim())
+                            : listValue(t.inventory_number);
                         const requiredActionRaw = String(t.required_action || '').trim();
                         const hasRequiredAction = requiredActionRaw !== '' && requiredActionRaw !== '—';
                         const requiredAction = hasRequiredAction ? escapeHtml(requiredActionRaw) : '';
@@ -1220,7 +1225,7 @@
                         return `<tr class="${hasComponent ? 'has-component' : ''}" style="animation-delay:${Math.min(idx * 0.03, 0.3)}s">
                             <td data-label="№ заявки">${taskBtn}<a href="/tickets/${ticketUrl}" class="ticket-link" onclick="openTicketFromList('${ticketJs}', event)" title="Заявка #${ticketNumber}">#${ticketNumber}${t.has_files ? '<span class="paperclip-icon">📎</span>' : ''}${t.has_comments ? '<span class="comment-icon-list" title="Есть комментарии">💬</span>' : ''}</a></td>
                             <td data-label="Статус"><span class="status-badge ${statusClass(t.status)}">${statusText}${t.status && statusClass(t.status) === 'status-completed' && t.completed_at ? `<br><span class="completed-date">${formatDate(t.completed_at)}</span>` : ''}</span></td>
-                            <td data-label="Инв. номер">${inventoryNumber}</td>
+                            <td data-label="Аппарат">${inventoryNumber}</td>
                             <td data-label="Требуется" class="${hasRequiredAction ? '' : 'cell-empty'}">${requiredAction}</td>
                             <td data-label="Комплектующее" class="${hasComponent ? '' : 'cell-empty'}">${component}</td>
                             <td data-label="Кабинет">${officeCabinet}</td>
@@ -1623,6 +1628,26 @@
         } else {
             loadTickets();
         }
+
+        let _listRevision = null;
+        async function pollTicketRevision() {
+            if (document.hidden) return;
+            try {
+                const data = await fetchJSON('/api/tickets/revision');
+                const rev = `${data.revision || ''}:${data.total || 0}`;
+                if (_listRevision === null) {
+                    _listRevision = rev;
+                    return;
+                }
+                if (rev !== _listRevision) {
+                    _listRevision = rev;
+                    loadTickets();
+                }
+            } catch (e) {
+                // Следующий цикл повторит проверку
+            }
+        }
+        setInterval(pollTicketRevision, 45000);
 
         const initialTicketNumber = _getTicketNumberFromPath(window.location.pathname);
         if (initialTicketNumber) {

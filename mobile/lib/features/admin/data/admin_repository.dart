@@ -7,6 +7,32 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../../core/network/api_client.dart';
 
+class EquipmentItem {
+  const EquipmentItem({
+    required this.id,
+    required this.model,
+    required this.serialNumber,
+    this.inventoryNumber,
+    required this.label,
+  });
+
+  final int id;
+  final String model;
+  final String serialNumber;
+  final String? inventoryNumber;
+  final String label;
+
+  factory EquipmentItem.fromJson(Map<String, dynamic> json) {
+    return EquipmentItem(
+      id: json['id'] is int ? json['id'] as int : int.parse('${json['id']}'),
+      model: json['model']?.toString() ?? '',
+      serialNumber: json['serial_number']?.toString() ?? '',
+      inventoryNumber: json['inventory_number']?.toString(),
+      label: json['label']?.toString() ?? '',
+    );
+  }
+}
+
 class AdminUserSummary {
   const AdminUserSummary({
     required this.username,
@@ -130,6 +156,37 @@ class AdminRepository {
     final file = File(p.join(dir.path, filename));
     await file.writeAsBytes(data, flush: true);
     return file;
+  }
+
+  Future<List<EquipmentItem>> listEquipment({String search = ''}) async {
+    final response = await _api.get<Map<String, dynamic>>(
+      '/api/equipment',
+      queryParameters: {'search': search},
+    );
+    final raw = response.data?['equipment'];
+    if (raw is! List) return const [];
+    return raw
+        .whereType<Map>()
+        .map((item) => EquipmentItem.fromJson(Map<String, dynamic>.from(item)))
+        .toList();
+  }
+
+  Future<void> saveEquipment({
+    int? id,
+    required String model,
+    required String serialNumber,
+    String? inventoryNumber,
+  }) async {
+    final body = {
+      'model': model,
+      'serial_number': serialNumber,
+      'inventory_number': inventoryNumber ?? '',
+    };
+    if (id == null) {
+      await _api.post('/api/equipment', data: body);
+    } else {
+      await _api.put('/api/equipment/$id', data: body);
+    }
   }
 
   Future<void> importDatabaseDump(String filePath) async {

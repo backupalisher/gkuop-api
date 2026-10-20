@@ -97,6 +97,17 @@ class AppHeaderMenuButton extends ConsumerWidget {
         if (user != null && user.isAdmin) {
           items.add(
             const PopupMenuItem(
+              value: _MenuAction.equipment,
+              child: ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(Icons.print_outlined, size: 20),
+                title: Text('Аппараты'),
+              ),
+            ),
+          );
+          items.add(
+            const PopupMenuItem(
               value: _MenuAction.exportDb,
               child: ListTile(
                 dense: true,
@@ -149,6 +160,8 @@ class AppHeaderMenuButton extends ConsumerWidget {
         await ref.read(themeControllerProvider.notifier).cycle();
       case _MenuAction.users:
         context.push('/admin/users');
+      case _MenuAction.equipment:
+        context.push('/admin/equipment');
       case _MenuAction.rebuild:
         await _confirmRebuild(context, ref, sinceDate: null);
       case _MenuAction.rebuildFromDate:
@@ -285,6 +298,7 @@ enum _MenuAction {
   sync,
   theme,
   users,
+  equipment,
   rebuild,
   rebuildFromDate,
   exportDb,

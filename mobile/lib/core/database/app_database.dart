@@ -23,6 +23,8 @@ class Tickets extends Table {
   TextColumn get ticketNumber => text()();
   TextColumn get subject => text().nullable()();
   TextColumn get inventoryNumber => text().nullable()();
+  TextColumn get serialNumber => text().nullable()();
+  TextColumn get equipmentLabel => text().nullable()();
   TextColumn get printerModel => text().nullable()();
   TextColumn get office => text().nullable()();
   TextColumn get officeAbbreviated => text().nullable()();
@@ -154,7 +156,18 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase(super.e);
 
   @override
-  int get schemaVersion => 1;
+  int get schemaVersion => 2;
+
+  @override
+  MigrationStrategy get migration => MigrationStrategy(
+    onCreate: (migrator) => migrator.createAll(),
+    onUpgrade: (migrator, from, to) async {
+      if (from < 2) {
+        await migrator.addColumn(tickets, tickets.serialNumber);
+        await migrator.addColumn(tickets, tickets.equipmentLabel);
+      }
+    },
+  );
 
   static Future<AppDatabase> open() async {
     final dir = await getApplicationDocumentsDirectory();
@@ -167,6 +180,7 @@ class AppDatabase extends _$AppDatabase {
     bool archived = false,
     bool tasksOnly = false,
     String? search,
+    String? office,
   }) {
     final q = select(tickets)
       ..where(
@@ -179,12 +193,18 @@ class AppDatabase extends _$AppDatabase {
     } else {
       q.where((t) => t.isArchived.equals(archived));
     }
+    if (office != null && office.trim().isNotEmpty) {
+      q.where((t) => t.office.equals(office.trim()));
+    }
     if (search != null && search.trim().isNotEmpty) {
       final s = '%${search.trim()}%';
       q.where(
         (t) =>
             t.ticketNumber.like(s) |
             t.inventoryNumber.like(s) |
+            t.serialNumber.like(s) |
+            t.equipmentLabel.like(s) |
+            t.printerModel.like(s) |
             t.component.like(s) |
             t.office.like(s) |
             t.status.like(s) |

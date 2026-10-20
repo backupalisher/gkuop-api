@@ -15,6 +15,7 @@ enum TicketsTab { active, tasks, archived }
 
 final _searchProvider = StateProvider<String>((ref) => '');
 final _tabProvider = StateProvider<TicketsTab>((ref) => TicketsTab.active);
+final _officeProvider = StateProvider<String?>((ref) => null);
 
 final ticketsStreamProvider = StreamProvider.autoDispose<List<Ticket>>((ref) {
   final auth = ref.watch(authControllerProvider);
@@ -22,12 +23,43 @@ final ticketsStreamProvider = StreamProvider.autoDispose<List<Ticket>>((ref) {
   if (user == null) return const Stream.empty();
   final search = ref.watch(_searchProvider);
   final tab = ref.watch(_tabProvider);
+  final office = ref.watch(_officeProvider);
   return ref.watch(ticketsRepositoryProvider).watchTickets(
         username: user.username,
         archived: tab == TicketsTab.archived,
         tasksOnly: tab == TicketsTab.tasks,
         search: search,
+        office: office,
       );
+});
+
+final _officesProvider = StreamProvider.autoDispose<List<({String office, String label})>>((
+  ref,
+) {
+  final auth = ref.watch(authControllerProvider);
+  final user = auth.user;
+  if (user == null) return const Stream.empty();
+  final db = ref.watch(appDatabaseProvider);
+  return (db.select(db.tickets)..where(
+        (t) => t.accountUsername.equals(user.username),
+      ))
+      .watch()
+      .map((rows) {
+        final labels = <String, String>{};
+        for (final ticket in rows) {
+          final office = ticket.office?.trim();
+          if (office == null || office.isEmpty) continue;
+          final abbreviated = ticket.officeAbbreviated?.trim();
+          labels[office] = (abbreviated != null && abbreviated.isNotEmpty)
+              ? abbreviated
+              : office;
+        }
+        final items = labels.entries
+            .map((entry) => (office: entry.key, label: entry.value))
+            .toList();
+        items.sort((a, b) => a.label.compareTo(b.label));
+        return items;
+      });
 });
 
 class TicketsListScreen extends ConsumerWidget {
@@ -129,11 +161,15 @@ class TicketsListScreen extends ConsumerWidget {
             ),
           ),
           Padding(
+            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+            child: _OfficeFilter(),
+          ),
+          Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
             child: TextField(
               decoration: const InputDecoration(
                 hintText:
-                    'Поиск: № заявки, инв. номер, тема, комплектующее…',
+                    'Поиск: № заявки, серийный, инв. номер, тема…',
                 suffixIcon: Icon(Icons.search, size: 20),
               ),
               onChanged: (v) => ref.read(_searchProvider.notifier).state = v,
@@ -307,12 +343,20 @@ class _TicketCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (ticket.inventoryNumber != null &&
-                  ticket.inventoryNumber!.trim().isNotEmpty)
+              if ((ticket.equipmentLabel != null &&
+                      ticket.equipmentLabel!.trim().isNotEmpty) ||
+                  (ticket.inventoryNumber != null &&
+                      ticket.inventoryNumber!.trim().isNotEmpty))
                 _CardRow(
-                  label: 'Инв. номер',
+                  label: ticket.equipmentLabel != null &&
+                          ticket.equipmentLabel!.trim().isNotEmpty
+                      ? 'Аппарат'
+                      : 'Инв. номер',
                   child: Text(
-                    ticket.inventoryNumber!,
+                    (ticket.equipmentLabel != null &&
+                            ticket.equipmentLabel!.trim().isNotEmpty)
+                        ? ticket.equipmentLabel!
+                        : ticket.inventoryNumber!,
                     textAlign: TextAlign.right,
                     style: const TextStyle(fontSize: 14),
                   ),
@@ -455,6 +499,37 @@ class _TabChip extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+class _OfficeFilter extends ConsumerWidget {
+  const _OfficeFilter();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final offices = ref.watch(_officesProvider).valueOrNull ?? const [];
+    final selected = ref.watch(_officeProvider);
+    return DropdownButtonFormField<String?>(
+      initialValue: selected,
+      isExpanded: true,
+      decoration: const InputDecoration(
+        labelText: 'Адрес',
+        isDense: true,
+      ),
+      items: [
+        const DropdownMenuItem<String?>(
+          value: null,
+          child: Text('Все адреса'),
+        ),
+        ...offices.map(
+          (item) => DropdownMenuItem<String?>(
+            value: item.office,
+            child: Text(item.label, overflow: TextOverflow.ellipsis),
+          ),
+        ),
+      ],
+      onChanged: (value) => ref.read(_officeProvider.notifier).state = value,
     );
   }
 }

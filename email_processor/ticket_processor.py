@@ -492,9 +492,18 @@ class TicketProcessor:
         if self.db.ticket_exists(ticket_number):
             existing_ticket = self.db.get_ticket(ticket_number)
             if self.process_existing_ticket(existing_ticket, email_data):
+                self._link_equipment(ticket_number)
                 return "updated"
             return "error"
 
         if self.process_new_ticket(email_data):
+            self._link_equipment(ticket_number)
             return "created"
         return "error"
+
+    def _link_equipment(self, ticket_number: str) -> None:
+        """Связывает заявку с единственным аппаратом справочника, если номер однозначен."""
+        try:
+            self.db.link_ticket_to_equipment(ticket_number, touch_updated=False)
+        except Exception as exc:
+            print(f"⚠ Не удалось связать заявку #{ticket_number} с аппаратом: {exc}")

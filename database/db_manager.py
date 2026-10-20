@@ -79,6 +79,7 @@ class DatabaseManager:
         self._retry_delay = config.get('retry_base_delay', 0.5)
         self._slow_query_threshold = config.get('slow_query_threshold_ms', 500.0)
         self._lock = threading.RLock()
+        self._equipment_cache: Optional[List[Dict[str, Any]]] = None
 
     def __getattribute__(self, name: str):
         attr = object.__getattribute__(self, name)
@@ -335,6 +336,47 @@ class DatabaseManager:
             CREATE INDEX IF NOT EXISTS idx_user_comments_created ON user_comments(created_at);
             """,
             """
+            CREATE TABLE IF NOT EXISTS equipment
+            (
+                id SERIAL PRIMARY KEY,
+                model VARCHAR(300) NOT NULL,
+                serial_number VARCHAR(100) NOT NULL,
+                inventory_number VARCHAR(50),
+                inventory_digits VARCHAR(50),
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_equipment_serial_ci
+                ON equipment (LOWER(serial_number))
+            """,
+            """
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_equipment_inventory_digits
+                ON equipment (inventory_digits) WHERE inventory_digits IS NOT NULL
+            """,
+            """
+            ALTER TABLE tickets ADD COLUMN IF NOT EXISTS serial_number VARCHAR(100)
+            """,
+            """
+            ALTER TABLE tickets ADD COLUMN IF NOT EXISTS equipment_id INTEGER
+            """,
+            """
+            CREATE INDEX IF NOT EXISTS idx_tickets_equipment_id ON tickets(equipment_id)
+            """,
+            """
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_constraint WHERE conname = 'tickets_equipment_id_fkey'
+                ) THEN
+                    ALTER TABLE tickets
+                        ADD CONSTRAINT tickets_equipment_id_fkey
+                        FOREIGN KEY (equipment_id) REFERENCES equipment(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+            """,
+            """
             CREATE TABLE IF NOT EXISTS rebuild_checkpoint
             (
                 id SERIAL PRIMARY KEY,
@@ -367,7 +409,8 @@ class DatabaseManager:
               AND t.relname IN (
                   'tickets', 'ticket_comments', 'ticket_history',
                   'ticket_tasks', 'ticket_images', 'user_comments', 'rebuild_checkpoint',
-                  'users', 'permissions', 'user_permissions', 'user_office_permissions'
+                  'users', 'permissions', 'user_permissions', 'user_office_permissions',
+                  'equipment'
               )
         """)
         sequences = cur.fetchall()
@@ -639,7 +682,7 @@ class DatabaseManager:
             'required_action', 'cause', 'fault_description', 'work_done',
             'tech_conclusion', 'soglasovano_line', 'first_received_date',
             'last_updated_date', 'is_active', 'is_archived', 'last_status',
-            'completed_by', 'completed_at',
+            'completed_by', 'completed_at', 'equipment_id', 'serial_number',
         }
         try:
             safe_updates = {
@@ -1329,6 +1372,330 @@ class DatabaseManager:
         except Exception as e:
             logger.error(f"Ошибка получения наличия комментариев: {e}")
             return {tn: False for tn in ticket_numbers}
+
+    # ─── Справочник аппаратов ────────────────────────────────────────
+
+    def _invalidate_equipment_cache(self) -> None:
+        self._equipment_cache = None
+
+    def list_equipment(self, search: Optional[str] = None) -> List[Dict[str, Any]]:
+        """Список аппаратов. Поиск — по модели, серийному и инвентарному номеру."""
+        rows = self._load_equipment_rows()
+        needle = (search or '').strip().lower()
+        if not needle:
+            return rows
+        digits = ''.join(ch for ch in needle if ch.isdigit())
+        matched: List[Dict[str, Any]] = []
+        for row in rows:
+            haystack = ' '.join(
+                str(row.get(key) or '')
+                for key in ('model', 'serial_number', 'inventory_number', 'inventory_digits')
+            ).lower()
+            if needle in haystack or (digits and len(digits) >= 4 and digits in (row.get('inventory_digits') or '')):
+                matched.append(row)
+        return matched
+
+    def get_equipment(self, equipment_id: int) -> Optional[Dict[str, Any]]:
+        for row in self._load_equipment_rows():
+            if row.get('id') == equipment_id:
+                return row
+        return None
+
+    def count_equipment(self) -> int:
+        try:
+            self._ensure_transaction()
+            self.cursor.execute('SELECT COUNT(*) AS cnt FROM equipment')
+            row = self.cursor.fetchone()
+            return int(row['cnt']) if row else 0
+        except Exception as exc:
+            logger.error('Ошибка подсчёта аппаратов: %s', exc)
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def create_equipment(self, payload: Dict[str, Optional[str]]) -> Dict[str, Any]:
+        """Добавляет аппарат. При пересечении номеров поднимает EquipmentConflictError."""
+        from services.equipment_catalog import EquipmentConflictError, find_equipment_conflict
+
+        conflict = find_equipment_conflict(
+            payload.get('serial_number') or '',
+            payload.get('inventory_digits'),
+            self._load_equipment_rows(),
+        )
+        if conflict:
+            raise EquipmentConflictError(conflict)
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                INSERT INTO equipment (model, serial_number, inventory_number, inventory_digits, updated_at)
+                VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                RETURNING id, model, serial_number, inventory_number, inventory_digits, created_at, updated_at
+                """,
+                (
+                    payload['model'],
+                    payload['serial_number'],
+                    payload.get('inventory_number'),
+                    payload.get('inventory_digits'),
+                ),
+            )
+            row = dict(self.cursor.fetchone())
+            self.connection.commit()
+            self._invalidate_equipment_cache()
+            return row
+        except psycopg2.IntegrityError as exc:
+            self.connection.rollback()
+            from services.equipment_catalog import EquipmentConflictError
+            raise EquipmentConflictError('Номер аппарата уже занят') from exc
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def update_equipment(self, equipment_id: int, payload: Dict[str, Optional[str]]) -> Optional[Dict[str, Any]]:
+        """Обновляет аппарат. None, если записи нет."""
+        from services.equipment_catalog import EquipmentConflictError, find_equipment_conflict
+
+        if self.get_equipment(equipment_id) is None:
+            return None
+        conflict = find_equipment_conflict(
+            payload.get('serial_number') or '',
+            payload.get('inventory_digits'),
+            self._load_equipment_rows(),
+            exclude_id=equipment_id,
+        )
+        if conflict:
+            raise EquipmentConflictError(conflict)
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                UPDATE equipment
+                SET model = %s,
+                    serial_number = %s,
+                    inventory_number = %s,
+                    inventory_digits = %s,
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE id = %s
+                RETURNING id, model, serial_number, inventory_number, inventory_digits, created_at, updated_at
+                """,
+                (
+                    payload['model'],
+                    payload['serial_number'],
+                    payload.get('inventory_number'),
+                    payload.get('inventory_digits'),
+                    equipment_id,
+                ),
+            )
+            row = self.cursor.fetchone()
+            self.connection.commit()
+            self._invalidate_equipment_cache()
+            return dict(row) if row else None
+        except psycopg2.IntegrityError as exc:
+            self.connection.rollback()
+            from services.equipment_catalog import EquipmentConflictError
+            raise EquipmentConflictError('Номер аппарата уже занят') from exc
+        except Exception:
+            self.connection.rollback()
+            raise
+
+    def replace_equipment_catalog(self, rows: List[Dict[str, Optional[str]]]) -> int:
+        """
+        Первичное заполнение пустого справочника.
+        Строка, которая пересекается с уже принятыми, пропускается.
+        """
+        from services.equipment_catalog import find_equipment_conflict
+
+        if self.count_equipment() > 0:
+            return 0
+        accepted: List[Dict[str, Any]] = []
+        inserted = 0
+        try:
+            self._ensure_transaction()
+            for row in rows:
+                conflict = find_equipment_conflict(
+                    row.get('serial_number') or '',
+                    row.get('inventory_digits'),
+                    accepted,
+                )
+                if conflict:
+                    logger.warning(
+                        'Аппарат %s не импортирован: %s',
+                        row.get('serial_number'),
+                        conflict,
+                    )
+                    continue
+                self.cursor.execute(
+                    """
+                    INSERT INTO equipment (model, serial_number, inventory_number, inventory_digits, updated_at)
+                    VALUES (%s, %s, %s, %s, CURRENT_TIMESTAMP)
+                    RETURNING id
+                    """,
+                    (
+                        row['model'],
+                        row['serial_number'],
+                        row.get('inventory_number'),
+                        row.get('inventory_digits'),
+                    ),
+                )
+                new_id = self.cursor.fetchone()['id']
+                stored = dict(row)
+                stored['id'] = new_id
+                accepted.append(stored)
+                inserted += 1
+            self.connection.commit()
+            self._invalidate_equipment_cache()
+            return inserted
+        except Exception:
+            logger.exception('Ошибка импорта справочника аппаратов')
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            self._invalidate_equipment_cache()
+            return 0
+
+    def attach_equipment_labels(self, tickets: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Добавляет equipment_label к словарям заявок."""
+        from services.equipment_catalog import format_equipment_label
+
+        if not tickets:
+            return tickets
+        equipment = {row['id']: row for row in self._load_equipment_rows()}
+        for ticket in tickets:
+            device = equipment.get(ticket.get('equipment_id'))
+            if not device:
+                ticket['equipment_label'] = None
+                continue
+            ticket['equipment_label'] = format_equipment_label(
+                device.get('model'),
+                device.get('serial_number'),
+                device.get('inventory_number'),
+            )
+            if not ticket.get('serial_number'):
+                ticket['serial_number'] = device.get('serial_number')
+        return tickets
+
+    def link_ticket_to_equipment(self, ticket_number: str, touch_updated: bool = False) -> bool:
+        """Ставит единственную связь заявки с аппаратом по инвентарному или серийному номеру."""
+        from services.equipment_catalog import match_equipment
+
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                SELECT ticket_number, inventory_number, equipment_id, serial_number
+                FROM tickets WHERE ticket_number = %s
+                """,
+                (ticket_number,),
+            )
+            ticket = self.cursor.fetchone()
+            if not ticket:
+                return False
+            match = match_equipment(ticket.get('inventory_number'), self._load_equipment_rows())
+            new_id = match['id'] if match else None
+            new_serial = match['serial_number'] if match else None
+            if ticket.get('equipment_id') == new_id and (ticket.get('serial_number') or None) == (new_serial or None):
+                return False
+            if touch_updated:
+                self.cursor.execute(
+                    """
+                    UPDATE tickets
+                    SET equipment_id = %s, serial_number = %s, last_updated_date = %s
+                    WHERE ticket_number = %s
+                    """,
+                    (new_id, new_serial, datetime.now(), ticket_number),
+                )
+            else:
+                self.cursor.execute(
+                    """
+                    UPDATE tickets
+                    SET equipment_id = %s, serial_number = %s
+                    WHERE ticket_number = %s
+                    """,
+                    (new_id, new_serial, ticket_number),
+                )
+            self.connection.commit()
+            return True
+        except Exception as exc:
+            logger.warning('Не удалось связать заявку %s с аппаратом: %s', ticket_number, exc)
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return False
+
+    def relink_all_tickets(self, touch_updated: bool = True) -> int:
+        """Пересчитывает связь всех заявок. Возвращает число изменённых строк."""
+        from services.equipment_catalog import match_equipment
+
+        equipment = self._load_equipment_rows()
+        changed = 0
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                'SELECT ticket_number, inventory_number, equipment_id, serial_number FROM tickets'
+            )
+            rows = self.cursor.fetchall()
+            now = datetime.now()
+            for ticket in rows:
+                match = match_equipment(ticket.get('inventory_number'), equipment)
+                new_id = match['id'] if match else None
+                new_serial = match['serial_number'] if match else None
+                if ticket.get('equipment_id') == new_id and (ticket.get('serial_number') or None) == (new_serial or None):
+                    continue
+                if touch_updated:
+                    self.cursor.execute(
+                        """
+                        UPDATE tickets
+                        SET equipment_id = %s, serial_number = %s, last_updated_date = %s
+                        WHERE ticket_number = %s
+                        """,
+                        (new_id, new_serial, now, ticket['ticket_number']),
+                    )
+                else:
+                    self.cursor.execute(
+                        """
+                        UPDATE tickets
+                        SET equipment_id = %s, serial_number = %s
+                        WHERE ticket_number = %s
+                        """,
+                        (new_id, new_serial, ticket['ticket_number']),
+                    )
+                changed += 1
+            self.connection.commit()
+            return changed
+        except Exception:
+            logger.exception('Ошибка пересвязывания заявок с аппаратами')
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return 0
+
+    def _load_equipment_rows(self) -> List[Dict[str, Any]]:
+        if self._equipment_cache is not None:
+            return self._equipment_cache
+        try:
+            self._ensure_transaction()
+            self.cursor.execute(
+                """
+                SELECT id, model, serial_number, inventory_number, inventory_digits,
+                       created_at, updated_at
+                FROM equipment
+                ORDER BY model, serial_number
+                """
+            )
+            self._equipment_cache = [dict(row) for row in self.cursor.fetchall()]
+            return self._equipment_cache
+        except Exception as exc:
+            logger.error('Ошибка чтения справочника аппаратов: %s', exc)
+            try:
+                self.connection.rollback()
+            except Exception:
+                pass
+            return []
 
     def close(self):
         """Закрытие соединения"""

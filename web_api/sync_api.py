@@ -116,7 +116,17 @@ async def api_sync_changes(
             # Tickets
             db.cursor.execute(
                 f"""
-                SELECT t.*
+                SELECT t.*,
+                       (
+                           SELECT e.model || ' - ' || e.serial_number ||
+                                  CASE
+                                      WHEN COALESCE(NULLIF(TRIM(e.inventory_number), ''), '') <> ''
+                                      THEN ' - ' || e.inventory_number
+                                      ELSE ''
+                                  END
+                           FROM equipment e
+                           WHERE e.id = t.equipment_id
+                       ) AS equipment_label
                 FROM tickets t
                 WHERE COALESCE(t.last_updated_date, t.first_received_date, t.created_at) > %s
                 {office_sql}

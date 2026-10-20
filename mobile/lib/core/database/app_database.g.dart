@@ -52,6 +52,28 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _serialNumberMeta = const VerificationMeta(
+    'serialNumber',
+  );
+  @override
+  late final GeneratedColumn<String> serialNumber = GeneratedColumn<String>(
+    'serial_number',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _equipmentLabelMeta = const VerificationMeta(
+    'equipmentLabel',
+  );
+  @override
+  late final GeneratedColumn<String> equipmentLabel = GeneratedColumn<String>(
+    'equipment_label',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
   static const VerificationMeta _printerModelMeta = const VerificationMeta(
     'printerModel',
   );
@@ -412,6 +434,8 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
     ticketNumber,
     subject,
     inventoryNumber,
+    serialNumber,
+    equipmentLabel,
     printerModel,
     office,
     officeAbbreviated,
@@ -487,6 +511,24 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         inventoryNumber.isAcceptableOrUnknown(
           data['inventory_number']!,
           _inventoryNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('serial_number')) {
+      context.handle(
+        _serialNumberMeta,
+        serialNumber.isAcceptableOrUnknown(
+          data['serial_number']!,
+          _serialNumberMeta,
+        ),
+      );
+    }
+    if (data.containsKey('equipment_label')) {
+      context.handle(
+        _equipmentLabelMeta,
+        equipmentLabel.isAcceptableOrUnknown(
+          data['equipment_label']!,
+          _equipmentLabelMeta,
         ),
       );
     }
@@ -753,6 +795,14 @@ class $TicketsTable extends Tickets with TableInfo<$TicketsTable, Ticket> {
         DriftSqlType.string,
         data['${effectivePrefix}inventory_number'],
       ),
+      serialNumber: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}serial_number'],
+      ),
+      equipmentLabel: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}equipment_label'],
+      ),
       printerModel: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}printer_model'],
@@ -891,6 +941,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
   final String ticketNumber;
   final String? subject;
   final String? inventoryNumber;
+  final String? serialNumber;
+  final String? equipmentLabel;
   final String? printerModel;
   final String? office;
   final String? officeAbbreviated;
@@ -927,6 +979,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     required this.ticketNumber,
     this.subject,
     this.inventoryNumber,
+    this.serialNumber,
+    this.equipmentLabel,
     this.printerModel,
     this.office,
     this.officeAbbreviated,
@@ -969,6 +1023,12 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     }
     if (!nullToAbsent || inventoryNumber != null) {
       map['inventory_number'] = Variable<String>(inventoryNumber);
+    }
+    if (!nullToAbsent || serialNumber != null) {
+      map['serial_number'] = Variable<String>(serialNumber);
+    }
+    if (!nullToAbsent || equipmentLabel != null) {
+      map['equipment_label'] = Variable<String>(equipmentLabel);
     }
     if (!nullToAbsent || printerModel != null) {
       map['printer_model'] = Variable<String>(printerModel);
@@ -1062,6 +1122,12 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       inventoryNumber: inventoryNumber == null && nullToAbsent
           ? const Value.absent()
           : Value(inventoryNumber),
+      serialNumber: serialNumber == null && nullToAbsent
+          ? const Value.absent()
+          : Value(serialNumber),
+      equipmentLabel: equipmentLabel == null && nullToAbsent
+          ? const Value.absent()
+          : Value(equipmentLabel),
       printerModel: printerModel == null && nullToAbsent
           ? const Value.absent()
           : Value(printerModel),
@@ -1154,6 +1220,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       ticketNumber: serializer.fromJson<String>(json['ticketNumber']),
       subject: serializer.fromJson<String?>(json['subject']),
       inventoryNumber: serializer.fromJson<String?>(json['inventoryNumber']),
+      serialNumber: serializer.fromJson<String?>(json['serialNumber']),
+      equipmentLabel: serializer.fromJson<String?>(json['equipmentLabel']),
       printerModel: serializer.fromJson<String?>(json['printerModel']),
       office: serializer.fromJson<String?>(json['office']),
       officeAbbreviated: serializer.fromJson<String?>(
@@ -1201,6 +1269,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       'ticketNumber': serializer.toJson<String>(ticketNumber),
       'subject': serializer.toJson<String?>(subject),
       'inventoryNumber': serializer.toJson<String?>(inventoryNumber),
+      'serialNumber': serializer.toJson<String?>(serialNumber),
+      'equipmentLabel': serializer.toJson<String?>(equipmentLabel),
       'printerModel': serializer.toJson<String?>(printerModel),
       'office': serializer.toJson<String?>(office),
       'officeAbbreviated': serializer.toJson<String?>(officeAbbreviated),
@@ -1240,6 +1310,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     String? ticketNumber,
     Value<String?> subject = const Value.absent(),
     Value<String?> inventoryNumber = const Value.absent(),
+    Value<String?> serialNumber = const Value.absent(),
+    Value<String?> equipmentLabel = const Value.absent(),
     Value<String?> printerModel = const Value.absent(),
     Value<String?> office = const Value.absent(),
     Value<String?> officeAbbreviated = const Value.absent(),
@@ -1278,6 +1350,10 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     inventoryNumber: inventoryNumber.present
         ? inventoryNumber.value
         : this.inventoryNumber,
+    serialNumber: serialNumber.present ? serialNumber.value : this.serialNumber,
+    equipmentLabel: equipmentLabel.present
+        ? equipmentLabel.value
+        : this.equipmentLabel,
     printerModel: printerModel.present ? printerModel.value : this.printerModel,
     office: office.present ? office.value : this.office,
     officeAbbreviated: officeAbbreviated.present
@@ -1336,6 +1412,12 @@ class Ticket extends DataClass implements Insertable<Ticket> {
       inventoryNumber: data.inventoryNumber.present
           ? data.inventoryNumber.value
           : this.inventoryNumber,
+      serialNumber: data.serialNumber.present
+          ? data.serialNumber.value
+          : this.serialNumber,
+      equipmentLabel: data.equipmentLabel.present
+          ? data.equipmentLabel.value
+          : this.equipmentLabel,
       printerModel: data.printerModel.present
           ? data.printerModel.value
           : this.printerModel,
@@ -1421,6 +1503,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           ..write('ticketNumber: $ticketNumber, ')
           ..write('subject: $subject, ')
           ..write('inventoryNumber: $inventoryNumber, ')
+          ..write('serialNumber: $serialNumber, ')
+          ..write('equipmentLabel: $equipmentLabel, ')
           ..write('printerModel: $printerModel, ')
           ..write('office: $office, ')
           ..write('officeAbbreviated: $officeAbbreviated, ')
@@ -1462,6 +1546,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
     ticketNumber,
     subject,
     inventoryNumber,
+    serialNumber,
+    equipmentLabel,
     printerModel,
     office,
     officeAbbreviated,
@@ -1502,6 +1588,8 @@ class Ticket extends DataClass implements Insertable<Ticket> {
           other.ticketNumber == this.ticketNumber &&
           other.subject == this.subject &&
           other.inventoryNumber == this.inventoryNumber &&
+          other.serialNumber == this.serialNumber &&
+          other.equipmentLabel == this.equipmentLabel &&
           other.printerModel == this.printerModel &&
           other.office == this.office &&
           other.officeAbbreviated == this.officeAbbreviated &&
@@ -1540,6 +1628,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
   final Value<String> ticketNumber;
   final Value<String?> subject;
   final Value<String?> inventoryNumber;
+  final Value<String?> serialNumber;
+  final Value<String?> equipmentLabel;
   final Value<String?> printerModel;
   final Value<String?> office;
   final Value<String?> officeAbbreviated;
@@ -1577,6 +1667,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     this.ticketNumber = const Value.absent(),
     this.subject = const Value.absent(),
     this.inventoryNumber = const Value.absent(),
+    this.serialNumber = const Value.absent(),
+    this.equipmentLabel = const Value.absent(),
     this.printerModel = const Value.absent(),
     this.office = const Value.absent(),
     this.officeAbbreviated = const Value.absent(),
@@ -1615,6 +1707,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     required String ticketNumber,
     this.subject = const Value.absent(),
     this.inventoryNumber = const Value.absent(),
+    this.serialNumber = const Value.absent(),
+    this.equipmentLabel = const Value.absent(),
     this.printerModel = const Value.absent(),
     this.office = const Value.absent(),
     this.officeAbbreviated = const Value.absent(),
@@ -1656,6 +1750,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Expression<String>? ticketNumber,
     Expression<String>? subject,
     Expression<String>? inventoryNumber,
+    Expression<String>? serialNumber,
+    Expression<String>? equipmentLabel,
     Expression<String>? printerModel,
     Expression<String>? office,
     Expression<String>? officeAbbreviated,
@@ -1694,6 +1790,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       if (ticketNumber != null) 'ticket_number': ticketNumber,
       if (subject != null) 'subject': subject,
       if (inventoryNumber != null) 'inventory_number': inventoryNumber,
+      if (serialNumber != null) 'serial_number': serialNumber,
+      if (equipmentLabel != null) 'equipment_label': equipmentLabel,
       if (printerModel != null) 'printer_model': printerModel,
       if (office != null) 'office': office,
       if (officeAbbreviated != null) 'office_abbreviated': officeAbbreviated,
@@ -1735,6 +1833,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     Value<String>? ticketNumber,
     Value<String?>? subject,
     Value<String?>? inventoryNumber,
+    Value<String?>? serialNumber,
+    Value<String?>? equipmentLabel,
     Value<String?>? printerModel,
     Value<String?>? office,
     Value<String?>? officeAbbreviated,
@@ -1773,6 +1873,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
       ticketNumber: ticketNumber ?? this.ticketNumber,
       subject: subject ?? this.subject,
       inventoryNumber: inventoryNumber ?? this.inventoryNumber,
+      serialNumber: serialNumber ?? this.serialNumber,
+      equipmentLabel: equipmentLabel ?? this.equipmentLabel,
       printerModel: printerModel ?? this.printerModel,
       office: office ?? this.office,
       officeAbbreviated: officeAbbreviated ?? this.officeAbbreviated,
@@ -1822,6 +1924,12 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
     }
     if (inventoryNumber.present) {
       map['inventory_number'] = Variable<String>(inventoryNumber.value);
+    }
+    if (serialNumber.present) {
+      map['serial_number'] = Variable<String>(serialNumber.value);
+    }
+    if (equipmentLabel.present) {
+      map['equipment_label'] = Variable<String>(equipmentLabel.value);
     }
     if (printerModel.present) {
       map['printer_model'] = Variable<String>(printerModel.value);
@@ -1929,6 +2037,8 @@ class TicketsCompanion extends UpdateCompanion<Ticket> {
           ..write('ticketNumber: $ticketNumber, ')
           ..write('subject: $subject, ')
           ..write('inventoryNumber: $inventoryNumber, ')
+          ..write('serialNumber: $serialNumber, ')
+          ..write('equipmentLabel: $equipmentLabel, ')
           ..write('printerModel: $printerModel, ')
           ..write('office: $office, ')
           ..write('officeAbbreviated: $officeAbbreviated, ')
@@ -5082,6 +5192,8 @@ typedef $$TicketsTableCreateCompanionBuilder =
       required String ticketNumber,
       Value<String?> subject,
       Value<String?> inventoryNumber,
+      Value<String?> serialNumber,
+      Value<String?> equipmentLabel,
       Value<String?> printerModel,
       Value<String?> office,
       Value<String?> officeAbbreviated,
@@ -5121,6 +5233,8 @@ typedef $$TicketsTableUpdateCompanionBuilder =
       Value<String> ticketNumber,
       Value<String?> subject,
       Value<String?> inventoryNumber,
+      Value<String?> serialNumber,
+      Value<String?> equipmentLabel,
       Value<String?> printerModel,
       Value<String?> office,
       Value<String?> officeAbbreviated,
@@ -5181,6 +5295,16 @@ class $$TicketsTableFilterComposer
 
   ColumnFilters<String> get inventoryNumber => $composableBuilder(
     column: $table.inventoryNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get serialNumber => $composableBuilder(
+    column: $table.serialNumber,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get equipmentLabel => $composableBuilder(
+    column: $table.equipmentLabel,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -5369,6 +5493,16 @@ class $$TicketsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get serialNumber => $composableBuilder(
+    column: $table.serialNumber,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get equipmentLabel => $composableBuilder(
+    column: $table.equipmentLabel,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get printerModel => $composableBuilder(
     column: $table.printerModel,
     builder: (column) => ColumnOrderings(column),
@@ -5550,6 +5684,16 @@ class $$TicketsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get serialNumber => $composableBuilder(
+    column: $table.serialNumber,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get equipmentLabel => $composableBuilder(
+    column: $table.equipmentLabel,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get printerModel => $composableBuilder(
     column: $table.printerModel,
     builder: (column) => column,
@@ -5720,6 +5864,8 @@ class $$TicketsTableTableManager
                 Value<String> ticketNumber = const Value.absent(),
                 Value<String?> subject = const Value.absent(),
                 Value<String?> inventoryNumber = const Value.absent(),
+                Value<String?> serialNumber = const Value.absent(),
+                Value<String?> equipmentLabel = const Value.absent(),
                 Value<String?> printerModel = const Value.absent(),
                 Value<String?> office = const Value.absent(),
                 Value<String?> officeAbbreviated = const Value.absent(),
@@ -5757,6 +5903,8 @@ class $$TicketsTableTableManager
                 ticketNumber: ticketNumber,
                 subject: subject,
                 inventoryNumber: inventoryNumber,
+                serialNumber: serialNumber,
+                equipmentLabel: equipmentLabel,
                 printerModel: printerModel,
                 office: office,
                 officeAbbreviated: officeAbbreviated,
@@ -5796,6 +5944,8 @@ class $$TicketsTableTableManager
                 required String ticketNumber,
                 Value<String?> subject = const Value.absent(),
                 Value<String?> inventoryNumber = const Value.absent(),
+                Value<String?> serialNumber = const Value.absent(),
+                Value<String?> equipmentLabel = const Value.absent(),
                 Value<String?> printerModel = const Value.absent(),
                 Value<String?> office = const Value.absent(),
                 Value<String?> officeAbbreviated = const Value.absent(),
@@ -5833,6 +5983,8 @@ class $$TicketsTableTableManager
                 ticketNumber: ticketNumber,
                 subject: subject,
                 inventoryNumber: inventoryNumber,
+                serialNumber: serialNumber,
+                equipmentLabel: equipmentLabel,
                 printerModel: printerModel,
                 office: office,
                 officeAbbreviated: officeAbbreviated,

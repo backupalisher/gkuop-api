@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -6,6 +8,7 @@ import 'app/theme/app_theme.dart';
 import 'app/theme/theme_controller.dart';
 import 'core/database/app_database.dart';
 import 'core/di/providers.dart';
+import 'core/sync/sync_engine.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -27,14 +30,20 @@ class GkuopApp extends ConsumerStatefulWidget {
 }
 
 class _GkuopAppState extends ConsumerState<GkuopApp> with WidgetsBindingObserver {
+  Timer? _syncTimer;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _syncTimer = Timer.periodic(const Duration(seconds: 45), (_) {
+      _syncIfLoggedIn(SyncReason.background);
+    });
   }
 
   @override
   void dispose() {
+    _syncTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -43,7 +52,16 @@ class _GkuopAppState extends ConsumerState<GkuopApp> with WidgetsBindingObserver
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.resumed) {
       ref.read(authControllerProvider.notifier).refreshIfExpiring();
+      _syncIfLoggedIn(SyncReason.appResume);
     }
+  }
+
+  void _syncIfLoggedIn(SyncReason reason) {
+    final user = ref.read(authControllerProvider).user;
+    if (user == null || !ref.read(authControllerProvider).isAuthenticated) {
+      return;
+    }
+    ref.read(syncEngineProvider).sync(username: user.username, reason: reason);
   }
 
   @override

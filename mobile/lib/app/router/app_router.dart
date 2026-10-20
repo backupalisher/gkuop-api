@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../core/di/providers.dart';
+import '../../features/admin/presentation/screens/equipment_screen.dart';
 import '../../features/admin/presentation/screens/rebuild_screen.dart';
 import '../../features/admin/presentation/screens/users_screen.dart';
 import '../../features/auth/presentation/screens/login_screen.dart';
@@ -34,6 +35,9 @@ final goRouterProvider = Provider<GoRouter>((ref) {
             !user.hasPermission('rebuild_data')) {
           return '/tickets';
         }
+        if (loc.startsWith('/admin/equipment') && !user.isAdmin) {
+          return '/tickets';
+        }
       }
       return null;
     },
@@ -55,6 +59,10 @@ final goRouterProvider = Provider<GoRouter>((ref) {
       GoRoute(
         path: '/admin/users',
         builder: (context, state) => const UsersScreen(),
+      ),
+      GoRoute(
+        path: '/admin/equipment',
+        builder: (context, state) => const EquipmentScreen(),
       ),
       GoRoute(
         path: '/admin/rebuild',

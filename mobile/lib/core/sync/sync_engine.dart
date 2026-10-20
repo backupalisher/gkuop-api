@@ -374,6 +374,8 @@ class SyncEngine {
               ticketNumber: Value(ticketNumber),
               subject: Value(data['subject'] as String?),
               inventoryNumber: Value(data['inventory_number'] as String?),
+              serialNumber: Value(data['serial_number'] as String?),
+              equipmentLabel: Value(data['equipment_label'] as String?),
               printerModel: Value(data['printer_model'] as String?),
               office: Value(data['office'] as String?),
               officeAbbreviated: Value(data['office_abbreviated'] as String?),

@@ -54,6 +54,7 @@ from utils.email_sync import (
     compute_imap_since_date,
     process_email_messages,
 )
+from utils.mail_lock import mail_lock
 
 # Импорт модуля аутентификации и авторизации
 from auth.middleware import AuthMiddleware, require_permission, require_role, get_current_user
@@ -83,6 +84,55 @@ _upload_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="upload"
 
 # Версия статических файлов (вычисляется при старте)
 static_version: str = "1"
+
+# Останов фонового опроса почты
+_mail_poller_stop = threading.Event()
+
+
+def _import_equipment_catalog() -> None:
+    """Заполняет пустой справочник из data/equipment_catalog.xlsx и связывает заявки."""
+    from services.equipment_catalog import DEFAULT_CATALOG_PATH, read_catalog_xlsx
+
+    if not db:
+        return
+    if not DEFAULT_CATALOG_PATH.is_file():
+        logger.warning("Файл справочника не найден: %s", DEFAULT_CATALOG_PATH)
+        return
+    if db.count_equipment() > 0:
+        logger.info("Справочник аппаратов уже заполнен (%s)", db.count_equipment())
+        return
+    rows = read_catalog_xlsx(DEFAULT_CATALOG_PATH)
+    inserted = db.replace_equipment_catalog(rows)
+    linked = db.relink_all_tickets(touch_updated=True) if inserted else 0
+    logger.info("Справочник аппаратов: добавлено %s, связано заявок %s", inserted, linked)
+    print(f"🖨️ Справочник аппаратов: {inserted}, связано заявок: {linked}", flush=True)
+
+
+def _poll_mail_once() -> None:
+    """Один проход автозагрузки. Пропускается, пока идёт ручная перестройка."""
+    if not db or _rebuild_progress["running"]:
+        return
+    if not mail_lock.acquire(blocking=False):
+        return
+    try:
+        from utils.mail_ingest import ingest_incremental
+        ingest_incremental(db)
+    except Exception:
+        logger.exception("Автозагрузка писем")
+    finally:
+        mail_lock.release()
+
+
+def _start_mail_poller() -> None:
+    """Фоновый поток: сразу один проход, затем пауза 60 секунд."""
+
+    def _loop() -> None:
+        while not _mail_poller_stop.is_set():
+            _poll_mail_once()
+            _mail_poller_stop.wait(60)
+
+    threading.Thread(target=_loop, name="mail-poller", daemon=True).start()
+
 
 # Хранилище статуса фоновой перестройки БД
 _rebuild_progress = {
@@ -252,6 +302,11 @@ async def lifespan(app: FastAPI):
         except Exception as comp_sync_err:
             logger.warning("Не удалось синхронизировать component из истории: %s", comp_sync_err)
 
+        try:
+            _import_equipment_catalog()
+        except Exception as catalog_err:
+            logger.warning("Не удалось импортировать справочник аппаратов: %s", catalog_err)
+
         # Идемпотентность для мобильного клиента (Idempotency-Key)
         try:
             from web_api.idempotency import ensure_idempotency_table
@@ -318,7 +373,13 @@ async def lifespan(app: FastAPI):
     install_crash_monitor(shutdown_callback=_shutdown_cleanup)
     print("🛡️ Система мониторинга аварийных завершений активирована")
 
+    if db_connected:
+        _start_mail_poller()
+        print("✉ Автозагрузка писем: каждые 60 секунд")
+
     yield
+
+    _mail_poller_stop.set()
 
     # При штатном завершении (lifespan yield завершился) — снимаем обработчики
     uninstall_crash_monitor()
@@ -414,7 +475,9 @@ if os.path.isdir(static_dir):
 app.include_router(auth_router)
 
 from web_api.sync_api import router as sync_router
+from web_api.equipment_api import router as equipment_router
 app.include_router(sync_router)
+app.include_router(equipment_router)
 
 # ─── Middleware для отслеживания запросов ──────────────────────────
 
@@ -529,6 +592,37 @@ async def api_get_tickets(
                         "REGEXP_REPLACE(t.inventory_number, '[^0-9]', '', 'g') ILIKE %s ESCAPE '\\'"
                     )
                     params_list.append(f"%{digits_only}%")
+
+                # 2c. Серийный номер заявки и связанного аппарата
+                conditions.append("COALESCE(t.serial_number, '') ILIKE %s ESCAPE '\\'")
+                params_list.append(like_val)
+                conditions.append(
+                    """EXISTS (
+                        SELECT 1 FROM equipment eq
+                        WHERE eq.id = t.equipment_id
+                          AND (
+                                eq.serial_number ILIKE %s ESCAPE '\\'
+                             OR COALESCE(eq.inventory_number, '') ILIKE %s ESCAPE '\\'
+                             OR COALESCE(eq.model, '') ILIKE %s ESCAPE '\\'
+                          )
+                    )"""
+                )
+                params_list.extend([like_val, like_val, like_val])
+                if digits_only and len(digits_only) >= 4:
+                    conditions.append(
+                        """EXISTS (
+                            SELECT 1 FROM equipment eq
+                            WHERE eq.id = t.equipment_id
+                              AND eq.inventory_digits IS NOT NULL
+                              AND char_length(eq.inventory_digits) >= 4
+                              AND (
+                                    eq.inventory_digits LIKE %s
+                                 OR %s LIKE '%%' || eq.inventory_digits
+                              )
+                        )"""
+                    )
+                    params_list.append(f"%{digits_only}")
+                    params_list.append(digits_only)
 
                 # ─── УРОВЕНЬ 3: Поиск по текстовым полям ───
                 text_fields = [
@@ -716,6 +810,7 @@ async def api_get_tickets(
             ticket_dict = dict(r)
             ticket_dict['office'] = abbreviate_office(ticket_dict.get('office'))
             tickets_data.append(ticket_dict)
+        db.attach_equipment_labels(tickets_data)
 
         return {
             "tickets": tickets_data,
@@ -741,6 +836,39 @@ async def api_get_offices(request: Request):
         return JSONResponse({"error": str(e)}, status_code=500)
 
 
+@app.get("/api/tickets/revision")
+@require_permission(Permission.VIEW_TICKETS)
+async def api_tickets_revision(request: Request):
+    """Метка списка заявок: клиент сравнивает её и сам перечитывает страницу."""
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+    try:
+        where_clauses = []
+        params = []
+        current_user = get_current_user(request)
+        if current_user and current_user.role != UserRole.ADMIN:
+            user_offices = auth_db.get_user_offices(current_user.username) if auth_db else []
+            if user_offices:
+                placeholders = ", ".join(["%s"] * len(user_offices))
+                where_clauses.append(f"office IN ({placeholders})")
+                params.extend(user_offices)
+            else:
+                where_clauses.append("1 = 0")
+        where_sql = (" WHERE " + " AND ".join(where_clauses)) if where_clauses else ""
+        with db._lock:
+            db.cursor.execute(
+                f"SELECT MAX(last_updated_date) AS revision, COUNT(*) AS total FROM tickets{where_sql}",
+                params,
+            )
+            row = db.cursor.fetchone()
+        revision = row["revision"] if row else None
+        if hasattr(revision, "isoformat"):
+            revision = revision.isoformat()
+        return {"revision": revision or "", "total": int(row["total"]) if row else 0}
+    except Exception as exc:
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @app.get("/api/tickets/{ticket_number}")
 @require_permission(Permission.VIEW_TICKET_DETAIL)
 async def api_get_ticket(ticket_number: str, request: Request = None):
@@ -752,6 +880,7 @@ async def api_get_ticket(ticket_number: str, request: Request = None):
         ticket = db.get_ticket(ticket_number)
         if not ticket:
             return JSONResponse({"error": "Заявка не найдена"}, status_code=404)
+        db.attach_equipment_labels([ticket])
 
         # ─── Проверка прав доступа к офису заявки ───────────────
         access_error = _require_ticket_access(request, ticket)
@@ -1623,6 +1752,7 @@ async def api_get_task_tickets(
             ticket_dict = dict(r)
             ticket_dict['office'] = abbreviate_office(ticket_dict.get('office'))
             tickets_data.append(ticket_dict)
+        db.attach_equipment_labels(tickets_data)
 
         return {
             "tickets": tickets_data,
@@ -1974,6 +2104,22 @@ async def api_get_statuses(request: Request):
 
 def _run_rebuild_background(since_date_override: Optional[datetime] = None):
     """Фоновая задача перестройки БД (выполняется в отдельном потоке)"""
+    global _rebuild_progress
+    if not mail_lock.acquire(timeout=120):
+        _rebuild_progress.update({
+            "running": False,
+            "status": "error",
+            "message": "Почта занята автозагрузкой, повторите обновление",
+        })
+        return
+    try:
+        _run_rebuild_background_locked(since_date_override)
+    finally:
+        mail_lock.release()
+
+
+def _run_rebuild_background_locked(since_date_override: Optional[datetime] = None):
+    """Перестройка БД. Вызывается только при удержанном mail_lock."""
     global _rebuild_progress
     try:
         config = load_config()
@@ -2415,6 +2561,15 @@ async def api_admin_db_import(request: Request, file: UploadFile = File(...)):
 
 
 # ─── HTML эндпоинты ────────────────────────────────────────────────
+
+
+@app.get("/equipment", response_class=HTMLResponse)
+async def equipment_page(request: Request):
+    """Справочник аппаратов. Изменение на странице доступно администратору."""
+    return templates.TemplateResponse(
+        "equipment.html",
+        {"request": request, "static_version": static_version},
+    )
 
 
 @app.get("/", response_class=HTMLResponse)

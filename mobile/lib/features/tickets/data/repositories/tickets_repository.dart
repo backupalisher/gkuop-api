@@ -28,13 +28,46 @@ class TicketsRepository {
     bool archived = false,
     bool tasksOnly = false,
     String? search,
+    String? office,
   }) {
     return _db.watchTicketsForAccount(
       username,
       archived: archived,
       tasksOnly: tasksOnly,
       search: search,
+      office: office,
     );
+  }
+
+  Future<void> setTask({
+    required String username,
+    required String ticketNumber,
+    required bool isTask,
+  }) async {
+    final ticket = await _db.getTicketByNumber(username, ticketNumber);
+    if (ticket == null) {
+      throw StateError('Заявка не найдена локально');
+    }
+    await _db.transaction(() async {
+      await (_db.update(
+        _db.tickets,
+      )..where((t) => t.localId.equals(ticket.localId))).write(
+        TicketsCompanion(
+          isTask: Value(isTask),
+          localUpdatedAt: Value(DateTime.now().toUtc()),
+        ),
+      );
+      await _sync.enqueue(
+        username: username,
+        entityType: 'ticket_task',
+        entityLocalId: ticket.localId,
+        entityServerId: ticketNumber,
+        operation: isTask ? 'ADD_TASK' : 'REMOVE_TASK',
+        payload: {'ticket_number': ticketNumber},
+      );
+    });
+    // ignore: unawaited_futures
+    _sync.sync(username: username, reason: SyncReason.localMutation);
   }
 
   Future<Ticket?> getTicket(String username, String ticketNumber) {
