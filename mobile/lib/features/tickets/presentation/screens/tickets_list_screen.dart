@@ -510,26 +510,133 @@ class _OfficeFilter extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final offices = ref.watch(_officesProvider).valueOrNull ?? const [];
     final selected = ref.watch(_officeProvider);
-    return DropdownButtonFormField<String?>(
-      initialValue: selected,
-      isExpanded: true,
-      decoration: const InputDecoration(
-        labelText: 'Адрес',
-        isDense: true,
-      ),
-      items: [
-        const DropdownMenuItem<String?>(
-          value: null,
-          child: Text('Все адреса'),
+    final scheme = Theme.of(context).colorScheme;
+    String selectedLabel = 'Все адреса';
+    if (selected != null) {
+      selectedLabel = selected;
+      for (final item in offices) {
+        if (item.office == selected) {
+          selectedLabel = item.label;
+          break;
+        }
+      }
+    }
+
+    // Единый Material-вид на Android и iOS: нативный DropdownButtonFormField
+    // на iOS выглядит иначе (стрелка/меню/поле).
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => _pickOffice(
+          context: context,
+          ref: ref,
+          offices: offices,
+          selected: selected,
         ),
-        ...offices.map(
-          (item) => DropdownMenuItem<String?>(
-            value: item.office,
-            child: Text(item.label, overflow: TextOverflow.ellipsis),
+        child: InputDecorator(
+          isEmpty: false,
+          decoration: const InputDecoration(
+            labelText: 'Адрес',
+            isDense: true,
+            suffixIcon: Icon(Icons.arrow_drop_down, size: 24),
+          ),
+          child: Text(
+            selectedLabel,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              fontSize: 14,
+              color: scheme.onSurface,
+            ),
           ),
         ),
-      ],
-      onChanged: (value) => ref.read(_officeProvider.notifier).state = value,
+      ),
     );
   }
+
+  Future<void> _pickOffice({
+    required BuildContext context,
+    required WidgetRef ref,
+    required List<({String office, String label})> offices,
+    required String? selected,
+  }) async {
+    final scheme = Theme.of(context).colorScheme;
+    final picked = await showModalBottomSheet<Object>(
+      context: context,
+      showDragHandle: true,
+      isScrollControlled: true,
+      builder: (ctx) {
+        final maxHeight = MediaQuery.sizeOf(ctx).height * 0.6;
+        return SafeArea(
+          child: SizedBox(
+            height: maxHeight,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    'Адрес',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w700,
+                      color: scheme.onSurface,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: offices.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) {
+                        final isSelected = selected == null;
+                        return ListTile(
+                          title: const Text('Все адреса'),
+                          trailing: isSelected
+                              ? Icon(Icons.check, color: scheme.primary)
+                              : null,
+                          selected: isSelected,
+                          onTap: () => Navigator.pop(ctx, _OfficeFilterClear.instance),
+                        );
+                      }
+                      final item = offices[index - 1];
+                      final isSelected = item.office == selected;
+                      return ListTile(
+                        title: Text(
+                          item.label,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        trailing: isSelected
+                            ? Icon(Icons.check, color: scheme.primary)
+                            : null,
+                        selected: isSelected,
+                        onTap: () => Navigator.pop(ctx, item.office),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+
+    if (picked == null) return;
+    if (picked is _OfficeFilterClear) {
+      ref.read(_officeProvider.notifier).state = null;
+      return;
+    }
+    if (picked is String) {
+      ref.read(_officeProvider.notifier).state = picked;
+    }
+  }
+}
+
+/// Sentinel: отличить «Все адреса» от закрытия sheet без выбора (null).
+class _OfficeFilterClear {
+  const _OfficeFilterClear._();
+  static const instance = _OfficeFilterClear._();
 }
