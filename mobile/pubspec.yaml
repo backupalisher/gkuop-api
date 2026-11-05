@@ -1,5 +1,5 @@
 name: gkuop_mobile
-description: Offline-First Android клиент для gkuop-api
+description: Offline-First Android/iOS клиент для gkuop-api
 publish_to: "none"
 version: 1.0.0+1
 
