@@ -48,13 +48,18 @@ flutter run -d <iphone-id> \
 Bundle ID: `info.part4.gkuopMobile`.  
 Для HTTP в локальной сети включён `NSAllowsLocalNetworking` в `Info.plist`.
 
-Если Xcode пишет `Module 'flutter_secure_storage' not found`:
+Если Xcode пишет `Module 'flutter_secure_storage' not found` или
+`Malformed version number string $(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)`:
 
 ```bash
-# в pubspec.yaml уже: flutter.config.enable-swift-package-manager: false
+# в pubspec.yaml: flutter.config.enable-swift-package-manager: false
+# в ios/Podfile: platform :ios, '15.0'
 flutter clean
 flutter pub get
-cd ios && pod install && cd ..
+cd ios
+rm -rf Pods Podfile.lock .symlinks
+pod install
+cd ..
 open ios/Runner.xcworkspace   # именно .xcworkspace, не .xcodeproj
 ```
 
