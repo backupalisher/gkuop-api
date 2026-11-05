@@ -43,3 +43,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+  # flutter_secure_storage 9.x и часть плагинов без полноценного SPM —
+  # иначе Xcode: Module 'flutter_secure_storage' not found.
+  config:
+    enable-swift-package-manager: false
