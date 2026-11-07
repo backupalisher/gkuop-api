@@ -1,6 +1,6 @@
 # gkuop-api
 
-Backend и веб-интерфейс заявок ГКУ ОП + Offline-First Android-клиент.
+Backend и веб-интерфейс заявок ГКУ ОП + Offline-First Android/iOS-клиент.
 
 ## Структура
 
@@ -10,7 +10,7 @@ Backend и веб-интерфейс заявок ГКУ ОП + Offline-First An
 | `auth/` | Пользователи, роли, permissions |
 | `database/` | PostgreSQL models / manager |
 | `email_processor/` | Парсинг почты → заявки |
-| `mobile/` | Flutter Offline-First Android-клиент |
+| `mobile/` | Flutter Offline-First Android/iOS-клиент |
 | `docs/` | Архитектура, sync-протокол, backend-changes |
 
 ## Мобильный клиент
