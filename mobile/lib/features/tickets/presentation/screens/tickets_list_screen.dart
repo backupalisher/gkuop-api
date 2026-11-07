@@ -79,6 +79,7 @@ class TicketsListScreen extends ConsumerWidget {
     final auth = ref.watch(authControllerProvider);
     final tab = ref.watch(_tabProvider);
     final office = ref.watch(_officeProvider);
+    final hideDone = ref.watch(hideDoneTicketsProvider);
     final dateFmt = DateFormat('dd.MM.yyyy, HH:mm');
     final scheme = Theme.of(context).colorScheme;
     final count = ticketsAsync.valueOrNull?.length;
@@ -204,6 +205,20 @@ class TicketsListScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(width: 8),
+                if (tab == TicketsTab.active) ...[
+                  _IconTabButton(
+                    icon: hideDone
+                        ? Icons.visibility_off_outlined
+                        : Icons.visibility_outlined,
+                    selected: hideDone,
+                    tooltip: hideDone
+                        ? 'Показать выполненные'
+                        : 'Скрыть выполненные',
+                    onTap: () =>
+                        ref.read(hideDoneTicketsProvider.notifier).toggle(),
+                  ),
+                  const SizedBox(width: 8),
+                ],
                 _IconTabButton(
                   icon: Icons.apartment_outlined,
                   selected: office != null,
@@ -213,15 +228,80 @@ class TicketsListScreen extends ConsumerWidget {
               ],
             ),
           ),
+          if (tab == TicketsTab.active && hideDone)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+              child: Material(
+                color: scheme.surfaceContainerHighest.withValues(alpha: 0.55),
+                borderRadius: BorderRadius.circular(8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(8),
+                  onTap: () =>
+                      ref.read(hideDoneTicketsProvider.notifier).setHidden(false),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 10,
+                    ),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 18,
+                          color: scheme.onSurfaceVariant,
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: Text(
+                            'Выполненные скрыты',
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: scheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                        Text(
+                          'Показать',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: scheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
           Expanded(
             child: ticketsAsync.when(
               data: (items) {
                 if (items.isEmpty) {
                   return Center(
-                    child: Text(
-                      'Нет заявок в локальной базе.\nВыполните синхронизацию.',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(color: scheme.onSurfaceVariant),
+                    child: Padding(
+                      padding: const EdgeInsets.all(24),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            tab == TicketsTab.active && hideDone
+                                ? 'Нет открытых заявок.\nВыполненные скрыты — нажмите «Показать».'
+                                : 'Нет заявок в локальной базе.\nВыполните синхронизацию.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: scheme.onSurfaceVariant),
+                          ),
+                          if (tab == TicketsTab.active && hideDone) ...[
+                            const SizedBox(height: 12),
+                            FilledButton(
+                              onPressed: () => ref
+                                  .read(hideDoneTicketsProvider.notifier)
+                                  .setHidden(false),
+                              child: const Text('Показать выполненные'),
+                            ),
+                          ],
+                        ],
+                      ),
                     ),
                   );
                 }

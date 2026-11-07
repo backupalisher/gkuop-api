@@ -50,8 +50,14 @@ class AppHeaderMenuButton extends ConsumerWidget {
               ),
               title: Text(
                 hideDone
-                    ? 'Показать выполненные'
-                    : 'Скрыть выполненные',
+                    ? 'Показать выполненные/решённые'
+                    : 'Скрыть выполненные/решённые',
+              ),
+              subtitle: Text(
+                hideDone
+                    ? 'Сейчас скрыты на вкладке «Активные»'
+                    : 'Хранится локально на этом устройстве',
+                style: TextStyle(fontSize: 11),
               ),
             ),
           ),
