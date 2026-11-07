@@ -59,13 +59,17 @@ final _officesProvider =
               final office = ticket.office?.trim();
               if (office == null || office.isEmpty) continue;
               final abbreviated = ticket.officeAbbreviated?.trim();
-              labels[office] = (abbreviated != null && abbreviated.isNotEmpty)
+              // label = сокращение (если есть), office остаётся полным адресом.
+              labels[office] = (abbreviated != null &&
+                      abbreviated.isNotEmpty &&
+                      abbreviated != office)
                   ? abbreviated
                   : office;
             }
             final items = labels.entries
                 .map((entry) => (office: entry.key, label: entry.value))
                 .toList();
+            // Сначала по сокращению, иначе по полному адресу.
             items.sort((a, b) => a.label.compareTo(b.label));
             return items;
           });
@@ -342,7 +346,9 @@ class TicketsListScreen extends ConsumerWidget {
 }
 
 Future<void> _pickOffice(BuildContext context, WidgetRef ref) async {
-  final offices = ref.read(_officesProvider).valueOrNull ?? const [];
+  // Дожидаемся списка, иначе при первом открытии бывает только «Все адреса».
+  final offices = await ref.read(_officesProvider.future);
+  if (!context.mounted) return;
   final selected = ref.read(_officeProvider);
   final scheme = Theme.of(context).colorScheme;
   final picked = await showModalBottomSheet<Object>(
@@ -351,6 +357,7 @@ Future<void> _pickOffice(BuildContext context, WidgetRef ref) async {
     isScrollControlled: true,
     builder: (ctx) {
       final maxHeight = MediaQuery.sizeOf(ctx).height * 0.6;
+      final muted = Theme.of(ctx).colorScheme.onSurfaceVariant;
       return SafeArea(
         child: SizedBox(
           height: maxHeight,
@@ -369,37 +376,65 @@ Future<void> _pickOffice(BuildContext context, WidgetRef ref) async {
                 ),
               ),
               Expanded(
-                child: ListView.builder(
-                  itemCount: offices.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) {
-                      final isSelected = selected == null;
-                      return ListTile(
-                        title: const Text('Все адреса'),
-                        trailing: isSelected
-                            ? Icon(Icons.check, color: scheme.primary)
-                            : null,
-                        selected: isSelected,
-                        onTap: () =>
-                            Navigator.pop(ctx, _OfficeFilterClear.instance),
-                      );
-                    }
-                    final item = offices[index - 1];
-                    final isSelected = item.office == selected;
-                    return ListTile(
-                      title: Text(
-                        item.label,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
+                child: offices.isEmpty
+                    ? Center(
+                        child: Text(
+                          'Нет доступных адресов',
+                          style: TextStyle(color: muted),
+                        ),
+                      )
+                    : ListView.builder(
+                        itemCount: offices.length + 1,
+                        itemBuilder: (context, index) {
+                          if (index == 0) {
+                            final isSelected = selected == null;
+                            return ListTile(
+                              leading: Icon(
+                                Icons.apartment_outlined,
+                                color: muted,
+                              ),
+                              title: const Text('Все адреса'),
+                              trailing: isSelected
+                                  ? Icon(Icons.check, color: scheme.primary)
+                                  : null,
+                              selected: isSelected,
+                              onTap: () => Navigator.pop(
+                                ctx,
+                                _OfficeFilterClear.instance,
+                              ),
+                            );
+                          }
+                          final item = offices[index - 1];
+                          final isSelected = item.office == selected;
+                          final hasAbbr =
+                              item.label.isNotEmpty && item.label != item.office;
+                          return ListTile(
+                            leading: SizedBox(
+                              width: 40,
+                              child: Text(
+                                hasAbbr ? item.label : '🏢',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: scheme.primary,
+                                  fontSize: hasAbbr ? 14 : 16,
+                                ),
+                              ),
+                            ),
+                            // Полный адрес всегда виден (как в веб-фильтре).
+                            title: Text(
+                              item.office,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: isSelected
+                                ? Icon(Icons.check, color: scheme.primary)
+                                : null,
+                            selected: isSelected,
+                            onTap: () => Navigator.pop(ctx, item.office),
+                          );
+                        },
                       ),
-                      trailing: isSelected
-                          ? Icon(Icons.check, color: scheme.primary)
-                          : null,
-                      selected: isSelected,
-                      onTap: () => Navigator.pop(ctx, item.office),
-                    );
-                  },
-                ),
               ),
             ],
           ),
