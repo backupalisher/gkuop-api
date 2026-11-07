@@ -14,6 +14,28 @@ OFFICE_ABBREVIATIONS: Dict[str, str] = {
     "Сущевский Вал, дом 9, строение 14": "СВ",
 }
 
+# Нормализованные ключи (нижний регистр, ё→е, без лишних пробелов) → сокращение.
+_OFFICE_ABBREVIATIONS_NORM: Dict[str, str] = {
+    " ".join(key.lower().replace("ё", "е").split()): value
+    for key, value in OFFICE_ABBREVIATIONS.items()
+}
+# Частые варианты написания из писем / ТО.
+_OFFICE_ABBREVIATIONS_NORM.update({
+    "2-й южнопортовый пр-д, д. 27а, стр. 1": "ЮП",
+    "2-й южнопортовый проезд, д. 27а, стр. 1": "ЮП",
+    "ул. садовая-самотечная, 1": "СС",
+    "ул. садовая-самотёчная, 1": "СС",
+    "улица садовая-самотечная, дом 1": "СС",
+    "улица садовая-самотёчная, дом 1": "СС",
+    "ул. новохохловская, д. 23, стр. 1": "НХ",
+    "сущевский вал, дом 9, строение 14": "СВ",
+    "сущёвский вал, дом 9, строение 14": "СВ",
+})
+
+
+def _normalize_office_key(office: str) -> str:
+    return " ".join(office.lower().replace("ё", "е").split())
+
 
 def abbreviate_office(office: Optional[str]) -> Optional[str]:
     """
@@ -28,7 +50,10 @@ def abbreviate_office(office: Optional[str]) -> Optional[str]:
     """
     if not office:
         return office
-    return OFFICE_ABBREVIATIONS.get(office, office)
+    exact = OFFICE_ABBREVIATIONS.get(office)
+    if exact:
+        return exact
+    return _OFFICE_ABBREVIATIONS_NORM.get(_normalize_office_key(office), office)
 
 def format_ticket_info(ticket: Dict) -> str:
     """Форматирование информации о заявке для вывода"""
