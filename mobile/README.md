@@ -48,20 +48,26 @@ flutter run -d <iphone-id> \
 Bundle ID: `info.part4.gkuopMobile`.  
 Для HTTP в локальной сети включён `NSAllowsLocalNetworking` в `Info.plist`.
 
-Если Xcode пишет `Module 'flutter_secure_storage' not found` или
-`Malformed version number string $(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)`:
+Если Xcode пишет `Module 'flutter_secure_storage' not found`,
+`Malformed version number string $(RECOMMENDED_IPHONEOS_DEPLOYMENT_TARGET)`
+или сотни `Stale file ... outside of the allowed root paths`:
 
 ```bash
 # в pubspec.yaml: flutter.config.enable-swift-package-manager: false
 # в ios/Podfile: platform :ios, '15.0'
 flutter clean
+rm -rf build ios/Pods ios/Podfile.lock ios/.symlinks \
+  ios/Flutter/Flutter.podspec ios/Flutter/ephemeral \
+  ~/Library/Developer/Xcode/DerivedData/*
 flutter pub get
-cd ios
-rm -rf Pods Podfile.lock .symlinks
-pod install
-cd ..
+cd ios && pod install && cd ..
 open ios/Runner.xcworkspace   # именно .xcworkspace, не .xcodeproj
 ```
+
+Предупреждения `deprecated` / `Implicit conversion` внутри `Pods/` и
+`~/.pub-cache/...` (SDWebImage, file_picker, sqlite3 и т.д.) — из
+зависимостей плагинов, на работу приложения не влияют; правятся
+обновлением пакетов у maintainers.
 
 ## Environments
 
