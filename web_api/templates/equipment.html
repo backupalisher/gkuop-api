@@ -48,8 +48,11 @@
                 </form>
             </div>
 
-            <div class="filters" style="margin-bottom: 12px;">
-                <input class="input" id="searchInput" placeholder="Поиск: модель, серийный, инвентарный" />
+            <div class="filters" style="margin-bottom: 12px; display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
+                <input class="input" id="searchInput" placeholder="Поиск: модель, серийный, инвентарный" style="flex:1; min-width:220px;" />
+                <button type="button" class="btn btn-ghost" id="importCatalogBtn" title="Перезагрузить data/equipment_catalog.xlsx">
+                    Обновить из xlsx
+                </button>
             </div>
             <div class="table-wrap">
                 <table>
@@ -132,6 +135,23 @@
         }
 
         document.getElementById('cancelEditBtn').onclick = resetForm;
+        document.getElementById('importCatalogBtn').onclick = async () => {
+            const errorBox = document.getElementById('formError');
+            errorBox.textContent = '';
+            if (!confirm('Заменить весь справочник аппаратов из equipment_catalog.xlsx и пересвязать заявки?')) {
+                return;
+            }
+            try {
+                const result = await api('/api/equipment/import-catalog', { method: 'POST' });
+                errorBox.style.color = '#2e7d32';
+                errorBox.textContent =
+                    `Импортировано: ${result.imported || 0}, пересвязано заявок: ${result.relinked || 0}`;
+                await loadEquipment();
+            } catch (error) {
+                errorBox.style.color = '#c62828';
+                errorBox.textContent = error.message;
+            }
+        };
         document.getElementById('searchInput').addEventListener('input', () => {
             clearTimeout(searchTimer);
             searchTimer = setTimeout(() => {

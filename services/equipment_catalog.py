@@ -209,20 +209,66 @@ def _numeric_identifier(value: Optional[str]) -> str:
     return digits_only(text)
 
 
+def _header_index(cells: Sequence[Any], *names: str) -> Optional[int]:
+    """Индекс колонки по одному из заголовков (без регистра, схлопнутые пробелы)."""
+    normalized = []
+    for cell in cells:
+        text = re.sub(r'\s+', ' ', str(cell or '')).strip().lower()
+        normalized.append(text)
+    for name in names:
+        key = re.sub(r'\s+', ' ', name).strip().lower()
+        if key in normalized:
+            return normalized.index(key)
+    return None
+
+
 def read_catalog_xlsx(path: Path) -> List[Dict[str, Optional[str]]]:
-    """Читает лист справочника: инвентарный, серийный, аппарат."""
+    """
+    Читает лист справочника.
+
+    Поддерживает форматы:
+    - инвентарный | серийный | аппарат
+    - адрес | инвентарный | серийный | аппарат  (ТО 2026 и аналоги)
+    """
     from openpyxl import load_workbook
 
     workbook = load_workbook(path, data_only=True, read_only=True)
     try:
         sheet = workbook[workbook.sheetnames[0]]
         rows: List[Dict[str, Optional[str]]] = []
+        inv_idx, serial_idx, model_idx = 0, 1, 2
         for index, row in enumerate(sheet.iter_rows(values_only=True)):
-            if index == 0 or not row:
+            if not row:
                 continue
-            inventory_raw = '' if row[0] is None else str(row[0])
-            serial_raw = '' if len(row) < 2 or row[1] is None else str(row[1])
-            model_raw = '' if len(row) < 3 or row[2] is None else str(row[2])
+            if index == 0:
+                detected_inv = _header_index(
+                    row, 'инвентарный номер', 'инв. номер', 'инвентарный'
+                )
+                detected_serial = _header_index(
+                    row, 'серийный номер', 'серийный', 's/n', 'sn'
+                )
+                detected_model = _header_index(
+                    row, 'аппарат', 'модель', 'принтер', 'оборудование'
+                )
+                if (
+                    detected_inv is not None
+                    and detected_serial is not None
+                    and detected_model is not None
+                ):
+                    inv_idx, serial_idx, model_idx = (
+                        detected_inv,
+                        detected_serial,
+                        detected_model,
+                    )
+                continue
+
+            inventory_raw = '' if len(row) <= inv_idx or row[inv_idx] is None else str(row[inv_idx])
+            serial_raw = (
+                '' if len(row) <= serial_idx or row[serial_idx] is None else str(row[serial_idx])
+            )
+            model_raw = (
+                '' if len(row) <= model_idx or row[model_idx] is None else str(row[model_idx])
+            )
             if not serial_raw.strip() and not model_raw.strip():
                 continue
             try:

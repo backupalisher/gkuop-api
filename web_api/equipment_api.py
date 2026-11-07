@@ -107,6 +107,42 @@ async def api_create_equipment(request: Request):
         return JSONResponse({"error": str(exc)}, status_code=500)
 
 
+@router.post("/api/equipment/import-catalog")
+@require_role("admin")
+async def api_import_equipment_catalog(request: Request):
+    """
+    Принудительно перезагружает справочник из data/equipment_catalog.xlsx
+    и заново связывает заявки.
+    """
+    denied = _require_admin(request)
+    if denied:
+        return denied
+    db = _db(request)
+    if not db:
+        return JSONResponse({"error": "БД не подключена"}, status_code=503)
+
+    from services.equipment_catalog import DEFAULT_CATALOG_PATH, read_catalog_xlsx
+
+    if not DEFAULT_CATALOG_PATH.is_file():
+        return JSONResponse(
+            {"error": f"Файл справочника не найден: {DEFAULT_CATALOG_PATH}"},
+            status_code=404,
+        )
+    try:
+        rows = read_catalog_xlsx(DEFAULT_CATALOG_PATH)
+        inserted = db.replace_equipment_catalog(rows, force=True)
+        linked = db.relink_all_tickets(touch_updated=True) if inserted else 0
+        return {
+            "status": "ok",
+            "imported": inserted,
+            "relinked": linked,
+            "source": str(DEFAULT_CATALOG_PATH.name),
+        }
+    except Exception as exc:
+        logger.exception("Ошибка импорта справочника из xlsx")
+        return JSONResponse({"error": str(exc)}, status_code=500)
+
+
 @router.put("/api/equipment/{equipment_id}")
 @require_role("admin")
 async def api_update_equipment(equipment_id: int, request: Request):

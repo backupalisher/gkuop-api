@@ -197,18 +197,22 @@ class AppDatabase extends _$AppDatabase {
       q.where((t) => t.office.equals(office.trim()));
     }
     if (search != null && search.trim().isNotEmpty) {
-      final s = '%${search.trim()}%';
+      // Экранируем % и _ — в SQL LIKE это спецсимволы.
+      final raw = search.trim().replaceAll(r'\', r'\\')
+          .replaceAll('%', r'\%')
+          .replaceAll('_', r'\_');
+      final s = '%$raw%';
       q.where(
         (t) =>
-            t.ticketNumber.like(s) |
-            t.inventoryNumber.like(s) |
-            t.serialNumber.like(s) |
-            t.equipmentLabel.like(s) |
-            t.printerModel.like(s) |
-            t.component.like(s) |
-            t.office.like(s) |
-            t.status.like(s) |
-            t.subject.like(s),
+            t.ticketNumber.like(s, escapeChar: r'\') |
+            t.inventoryNumber.like(s, escapeChar: r'\') |
+            t.serialNumber.like(s, escapeChar: r'\') |
+            t.equipmentLabel.like(s, escapeChar: r'\') |
+            t.printerModel.like(s, escapeChar: r'\') |
+            t.component.like(s, escapeChar: r'\') |
+            t.office.like(s, escapeChar: r'\') |
+            t.status.like(s, escapeChar: r'\') |
+            t.subject.like(s, escapeChar: r'\'),
       );
     }
     q.orderBy([(t) => OrderingTerm.desc(t.lastUpdatedDate)]);
