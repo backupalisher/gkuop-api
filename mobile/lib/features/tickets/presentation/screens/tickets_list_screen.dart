@@ -107,7 +107,7 @@ class TicketsListScreen extends ConsumerWidget {
               ),
               if (count != null)
                 TextSpan(
-                  text: '  $count',
+                  text: ' • $count',
                   style: TextStyle(
                     fontWeight: FontWeight.w600,
                     color: scheme.onSurfaceVariant,
@@ -393,9 +393,13 @@ class _TicketCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [
                     if (ticket.isTask)
-                      const Padding(
-                        padding: EdgeInsets.only(right: 6),
-                        child: Text('🔵', style: TextStyle(fontSize: 12)),
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: Icon(
+                          Icons.circle,
+                          size: 8,
+                          color: const Color(0xFF2F80ED),
+                        ),
                       ),
                     Flexible(
                       child: Text(
@@ -407,16 +411,6 @@ class _TicketCard extends StatelessWidget {
                         ),
                       ),
                     ),
-                    if (ticket.hasFiles)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Text('📎', style: TextStyle(fontSize: 13)),
-                      ),
-                    if (ticket.hasComments)
-                      const Padding(
-                        padding: EdgeInsets.only(left: 4),
-                        child: Text('💬', style: TextStyle(fontSize: 12)),
-                      ),
                     if (pending)
                       Padding(
                         padding: const EdgeInsets.only(left: 6),
@@ -451,23 +445,10 @@ class _TicketCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if ((ticket.equipmentLabel != null &&
-                      ticket.equipmentLabel!.trim().isNotEmpty) ||
-                  (ticket.inventoryNumber != null &&
-                      ticket.inventoryNumber!.trim().isNotEmpty))
+              if (_hasApparatus(ticket))
                 _CardRow(
-                  label: ticket.equipmentLabel != null &&
-                          ticket.equipmentLabel!.trim().isNotEmpty
-                      ? 'Аппарат'
-                      : 'Инв. номер',
-                  child: Text(
-                    (ticket.equipmentLabel != null &&
-                            ticket.equipmentLabel!.trim().isNotEmpty)
-                        ? ticket.equipmentLabel!
-                        : ticket.inventoryNumber!,
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 14),
-                  ),
+                  label: 'Аппарат',
+                  child: _ApparatusValue(ticket: ticket),
                 ),
               if (hasSoglasovano && needsParts)
                 _CardRow(
@@ -513,6 +494,78 @@ class _TicketCard extends StatelessWidget {
   }
 }
 
+bool _hasApparatus(Ticket ticket) {
+  return (ticket.equipmentLabel != null &&
+          ticket.equipmentLabel!.trim().isNotEmpty) ||
+      (ticket.printerModel != null && ticket.printerModel!.trim().isNotEmpty) ||
+      (ticket.serialNumber != null && ticket.serialNumber!.trim().isNotEmpty) ||
+      (ticket.inventoryNumber != null &&
+          ticket.inventoryNumber!.trim().isNotEmpty);
+}
+
+class _ApparatusValue extends StatelessWidget {
+  const _ApparatusValue({required this.ticket});
+
+  final Ticket ticket;
+
+  @override
+  Widget build(BuildContext context) {
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final model = (ticket.printerModel?.trim().isNotEmpty == true)
+        ? ticket.printerModel!.trim()
+        : null;
+    final serial = ticket.serialNumber?.trim();
+    final inventory = ticket.inventoryNumber?.trim();
+    final label = ticket.equipmentLabel?.trim();
+
+    // Как на скриншоте: модель крупно, серийный/инв. ниже серым.
+    String? title = model;
+    final subLines = <String>[];
+    if (serial != null && serial.isNotEmpty) subLines.add(serial);
+    if (inventory != null && inventory.isNotEmpty) subLines.add(inventory);
+
+    if (title == null || title.isEmpty) {
+      if (label != null && label.isNotEmpty) {
+        // equipment_label часто "Model - serial - inv"
+        final parts = label
+            .split(RegExp(r'\s[-–—]\s'))
+            .map((p) => p.trim())
+            .where((p) => p.isNotEmpty)
+            .toList();
+        if (parts.length >= 2) {
+          title = parts.first;
+          for (final p in parts.skip(1)) {
+            if (!subLines.contains(p)) subLines.add(p);
+          }
+        } else {
+          title = label;
+        }
+      } else if (subLines.isNotEmpty) {
+        title = subLines.removeAt(0);
+      }
+    }
+
+    if (title == null || title.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          title,
+          textAlign: TextAlign.right,
+          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
+        ),
+        for (final line in subLines)
+          Text(
+            line,
+            textAlign: TextAlign.right,
+            style: TextStyle(fontSize: 12, color: muted),
+          ),
+      ],
+    );
+  }
+}
+
 class _CardRow extends StatelessWidget {
   const _CardRow({required this.label, required this.child});
 
@@ -525,17 +578,20 @@ class _CardRow extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
-        crossAxisAlignment: CrossAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           SizedBox(
             width: 110,
-            child: Text(
-              label.toUpperCase(),
-              style: TextStyle(
-                fontSize: 11,
-                fontWeight: FontWeight.w500,
-                color: muted,
-                letterSpacing: 0.2,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                label.toUpperCase(),
+                style: TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w500,
+                  color: muted,
+                  letterSpacing: 0.2,
+                ),
               ),
             ),
           ),
