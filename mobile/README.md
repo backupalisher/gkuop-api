@@ -21,16 +21,18 @@ flutter pub get
 dart run build_runner build --delete-conflicting-outputs
 ```
 
+По умолчанию API: **`https://gkuop.part4.info`** (все платформы).  
+`--dart-define=API_BASE_URL=...` нужен только для локального/отладочного сервера.
+
 ### Android
 
 ```bash
-flutter run \
-  --dart-define=API_BASE_URL=http://10.0.2.2:8002 \
-  --dart-define=ENVIRONMENT=development
+flutter run
+# локальный API на эмуляторе:
+# flutter run --dart-define=API_BASE_URL=http://10.0.2.2:8002
 ```
 
-Эмулятор Android → хост-машина: `10.0.2.2`.  
-Физическое устройство: IP сервера в LAN / HTTPS production URL.
+Эмулятор Android → хост-машина: `10.0.2.2`.
 
 ### iOS (Mac + USB iPhone)
 
@@ -40,9 +42,9 @@ flutter run \
 
 ```bash
 flutter devices
-flutter run -d <iphone-id> \
-  --dart-define=API_BASE_URL=http://<IP-Mac-или-API-в-LAN>:8002 \
-  --dart-define=ENVIRONMENT=development
+flutter run -d <iphone-id>
+# локальный API:
+# flutter run -d <iphone-id> --dart-define=API_BASE_URL=http://<IP-Mac-или-API-в-LAN>:8002
 ```
 
 Bundle ID: `info.part4.gkuopMobile`.  
@@ -73,7 +75,7 @@ open ios/Runner.xcworkspace   # именно .xcworkspace, не .xcodeproj
 
 | Define | Описание |
 |--------|----------|
-| `API_BASE_URL` | Базовый URL API (без trailing slash) |
+| `API_BASE_URL` | Базовый URL API (по умолчанию `https://gkuop.part4.info`) |
 | `ENVIRONMENT` | `development` / `staging` / `production` |
 
 ## Архитектура
@@ -93,12 +95,12 @@ flutter test
 ### Android
 
 Настройте signing в `android/key.properties` (не коммитить).  
-Сборка: `flutter build apk --release --dart-define=API_BASE_URL=https://gkuop.example.com`.
+Сборка: `flutter build apk --release` (URL по умолчанию — `https://gkuop.part4.info`).
 
 ### iOS
 
 ```bash
-flutter build ipa --release --dart-define=API_BASE_URL=https://gkuop.example.com
+flutter build ipa --release
 ```
 
 Требуется Apple Developer Program и корректный provisioning profile в Xcode.

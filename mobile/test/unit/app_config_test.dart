@@ -13,4 +13,9 @@ void main() {
         : cfg.apiBaseUrl;
     expect(cleaned, 'http://example.com');
   });
+
+  test('default API_BASE_URL — production host', () {
+    final cfg = AppConfig.fromEnvironment();
+    expect(cfg.apiBaseUrl, 'https://gkuop.part4.info');
+  });
 }

@@ -11,7 +11,7 @@ class AppConfig {
   static AppConfig fromEnvironment() {
     const base = String.fromEnvironment(
       'API_BASE_URL',
-      defaultValue: 'http://10.0.2.2:8002',
+      defaultValue: 'https://gkuop.part4.info',
     );
     const env = String.fromEnvironment(
       'ENVIRONMENT',
