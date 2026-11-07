@@ -83,6 +83,26 @@ List<SoglasovanoRow> parseSoglasovanieRows(String? value) {
       .toList();
 }
 
+/// Убирает слово «СОГЛАСОВАНО» и хвостовые разделители из текста согласования.
+String stripSoglasovanoWord(String value) {
+  return value
+      .replaceAll(
+        RegExp(
+          r'\s*[-–—=]?\s*СОГЛАСОВАНО(?=$|[\s,.;:!?\n])',
+          caseSensitive: false,
+        ),
+        '',
+      )
+      .replaceAll(
+        RegExp(r'СОГЛАСОВАНО', caseSensitive: false),
+        '',
+      )
+      .replaceAll(RegExp(r'[ \t]+'), ' ')
+      .replaceAll(RegExp(r' *\n *'), '\n')
+      .replaceAll(RegExp(r'\s*[-–—=]\s*$'), '')
+      .trim();
+}
+
 /// Блок согласованных деталей (как таблица «Согласование» на вебе).
 class SoglasovanoBlock extends StatelessWidget {
   const SoglasovanoBlock({super.key, required this.value, this.compact = false});
@@ -95,16 +115,17 @@ class SoglasovanoBlock extends StatelessWidget {
     final rows = parseSoglasovanieRows(value);
     if (rows.isEmpty) {
       return Text(
-        value,
+        stripSoglasovanoWord(value),
         textAlign: compact ? TextAlign.right : TextAlign.left,
         style: const TextStyle(fontSize: 13),
       );
     }
 
-    final hasStructured = rows.any((r) => r.number.isNotEmpty || r.status.isNotEmpty);
+    final hasStructured =
+        rows.any((r) => r.number.isNotEmpty || r.title.isNotEmpty);
     if (!hasStructured) {
       return Text(
-        value,
+        stripSoglasovanoWord(value),
         textAlign: compact ? TextAlign.right : TextAlign.left,
         style: const TextStyle(fontSize: 13),
       );
@@ -124,11 +145,11 @@ class SoglasovanoBlock extends StatelessWidget {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
+                // «СОГЛАСОВАНО» не показываем — только номер и название.
                 [
                   if (row.number.isNotEmpty) row.number,
                   row.title,
-                  if (row.status.isNotEmpty) row.status,
-                ].join('  '),
+                ].where((s) => s.trim().isNotEmpty).join('  '),
                 textAlign: compact ? TextAlign.right : TextAlign.left,
                 style: const TextStyle(
                   fontSize: 12,

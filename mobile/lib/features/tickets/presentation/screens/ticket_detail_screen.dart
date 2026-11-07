@@ -12,6 +12,7 @@ import '../../../../app/theme/app_colors.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../core/errors/failures.dart';
+import '../../../../shared/widgets/apparatus_value.dart';
 import '../../../../shared/widgets/component_pill.dart';
 import '../../../../shared/widgets/soglasovano_block.dart';
 import '../../../../shared/widgets/status_badge.dart';
@@ -164,15 +165,19 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                         SoglasovanoBlock(value: soglasovano),
                         const SizedBox(height: 12),
                       ],
-                      _tile(
-                        context,
-                        'Аппарат',
-                        (t.equipmentLabel != null &&
-                                t.equipmentLabel!.trim().isNotEmpty)
-                            ? t.equipmentLabel
-                            : t.printerModel,
-                      ),
-                      _tile(context, 'Инвентарный номер', t.inventoryNumber),
+                      if (!resolveApparatus(t).isEmpty) ...[
+                        Text(
+                          'Аппарат',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ApparatusValue(ticket: t, alignEnd: false),
+                        const SizedBox(height: 12),
+                      ],
                       _tile(context, 'Офис', t.office),
                       _tile(context, 'Кабинет', t.cabinet),
                       _tile(context, 'Требуется', t.requiredAction),
@@ -197,18 +202,6 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 16),
-              historyAsync.when(
-                data: (history) => _TicketHistorySection(
-                  history: history,
-                  dateFmt: dateFmt,
-                ),
-                loading: () => const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 8),
-                  child: Center(child: CircularProgressIndicator()),
-                ),
-                error: (_, __) => const SizedBox.shrink(),
               ),
               const SizedBox(height: 16),
               _AttachmentsSection(
@@ -274,6 +267,18 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                   child: const Text('Изменить примечание'),
                 ),
               ],
+              const SizedBox(height: 16),
+              historyAsync.when(
+                data: (history) => _TicketHistorySection(
+                  history: history,
+                  dateFmt: dateFmt,
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (_, __) => const SizedBox.shrink(),
+              ),
             ],
           );
         },
@@ -398,36 +403,37 @@ class _TicketHistorySection extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (history.isEmpty) {
-      return Card(
-        child: Padding(
-          padding: const EdgeInsets.all(14),
-          child: Text(
-            'История изменений недоступна оффлайн или пуста.',
-            style: TextStyle(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-              fontSize: 13,
-            ),
-          ),
-        ),
-      );
-    }
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+    final title = history.isEmpty
+        ? 'История изменений'
+        : 'История изменений (${history.length})';
 
     return Card(
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'История изменений (${history.length})',
-              style: const TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+      clipBehavior: Clip.antiAlias,
+      child: Theme(
+        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+        child: ExpansionTile(
+          initiallyExpanded: false,
+          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
+          childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 10),
+          title: Text(
+            title,
+            style: const TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w700,
             ),
-            const SizedBox(height: 10),
-            for (final item in history) _historyItem(context, item),
+          ),
+          children: [
+            if (history.isEmpty)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Text(
+                  'История изменений недоступна оффлайн или пуста.',
+                  style: TextStyle(color: muted, fontSize: 13),
+                ),
+              )
+            else
+              for (final item in history) _historyItem(context, item),
           ],
         ),
       ),

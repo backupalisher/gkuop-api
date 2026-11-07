@@ -9,6 +9,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../core/sync/sync_engine.dart';
 import '../../../../shared/widgets/app_header_menu.dart';
+import '../../../../shared/widgets/apparatus_value.dart';
 import '../../../../shared/widgets/component_pill.dart';
 import '../../../../shared/widgets/soglasovano_block.dart';
 import '../../../../shared/widgets/status_badge.dart';
@@ -525,10 +526,10 @@ class _TicketCard extends StatelessWidget {
                   ],
                 ),
               ),
-              if (_hasApparatus(ticket))
+              if (!resolveApparatus(ticket).isEmpty)
                 _CardRow(
                   label: 'Аппарат',
-                  child: _ApparatusValue(ticket: ticket),
+                  child: ApparatusValue(ticket: ticket),
                 ),
               if (hasSoglasovano && needsParts)
                 _CardRow(
@@ -570,78 +571,6 @@ class _TicketCard extends StatelessWidget {
           ),
         ),
       ),
-    );
-  }
-}
-
-bool _hasApparatus(Ticket ticket) {
-  return (ticket.equipmentLabel != null &&
-          ticket.equipmentLabel!.trim().isNotEmpty) ||
-      (ticket.printerModel != null && ticket.printerModel!.trim().isNotEmpty) ||
-      (ticket.serialNumber != null && ticket.serialNumber!.trim().isNotEmpty) ||
-      (ticket.inventoryNumber != null &&
-          ticket.inventoryNumber!.trim().isNotEmpty);
-}
-
-class _ApparatusValue extends StatelessWidget {
-  const _ApparatusValue({required this.ticket});
-
-  final Ticket ticket;
-
-  @override
-  Widget build(BuildContext context) {
-    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
-    final model = (ticket.printerModel?.trim().isNotEmpty == true)
-        ? ticket.printerModel!.trim()
-        : null;
-    final serial = ticket.serialNumber?.trim();
-    final inventory = ticket.inventoryNumber?.trim();
-    final label = ticket.equipmentLabel?.trim();
-
-    // Как на скриншоте: модель крупно, серийный/инв. ниже серым.
-    String? title = model;
-    final subLines = <String>[];
-    if (serial != null && serial.isNotEmpty) subLines.add(serial);
-    if (inventory != null && inventory.isNotEmpty) subLines.add(inventory);
-
-    if (title == null || title.isEmpty) {
-      if (label != null && label.isNotEmpty) {
-        // equipment_label часто "Model - serial - inv"
-        final parts = label
-            .split(RegExp(r'\s[-–—]\s'))
-            .map((p) => p.trim())
-            .where((p) => p.isNotEmpty)
-            .toList();
-        if (parts.length >= 2) {
-          title = parts.first;
-          for (final p in parts.skip(1)) {
-            if (!subLines.contains(p)) subLines.add(p);
-          }
-        } else {
-          title = label;
-        }
-      } else if (subLines.isNotEmpty) {
-        title = subLines.removeAt(0);
-      }
-    }
-
-    if (title == null || title.isEmpty) return const SizedBox.shrink();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        Text(
-          title,
-          textAlign: TextAlign.right,
-          style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500),
-        ),
-        for (final line in subLines)
-          Text(
-            line,
-            textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 12, color: muted),
-          ),
-      ],
     );
   }
 }
