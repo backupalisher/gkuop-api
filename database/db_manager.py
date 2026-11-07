@@ -1500,19 +1500,30 @@ class DatabaseManager:
             self.connection.rollback()
             raise
 
-    def replace_equipment_catalog(self, rows: List[Dict[str, Optional[str]]]) -> int:
+    def replace_equipment_catalog(
+        self,
+        rows: List[Dict[str, Optional[str]]],
+        *,
+        force: bool = False,
+    ) -> int:
         """
-        Первичное заполнение пустого справочника.
+        Заполняет справочник из списка строк.
+
+        По умолчанию только если таблица пуста. При ``force=True`` очищает
+        справочник (FK tickets.equipment_id → SET NULL) и заливает заново.
         Строка, которая пересекается с уже принятыми, пропускается.
         """
         from services.equipment_catalog import find_equipment_conflict
 
-        if self.count_equipment() > 0:
+        if not force and self.count_equipment() > 0:
             return 0
         accepted: List[Dict[str, Any]] = []
         inserted = 0
         try:
             self._ensure_transaction()
+            if force:
+                # ON DELETE SET NULL на tickets.equipment_id
+                self.cursor.execute('DELETE FROM equipment')
             for row in rows:
                 conflict = find_equipment_conflict(
                     row.get('serial_number') or '',
@@ -1604,7 +1615,10 @@ class DatabaseManager:
             ticket = self.cursor.fetchone()
             if not ticket:
                 return False
-            match = match_equipment(ticket.get('inventory_number'), self._load_equipment_rows())
+            equipment = self._load_equipment_rows()
+            match = match_equipment(ticket.get('inventory_number'), equipment)
+            if match is None:
+                match = match_equipment(ticket.get('serial_number'), equipment)
             new_id = match['id'] if match else None
             new_serial = match['serial_number'] if match else None
             if ticket.get('equipment_id') == new_id and (ticket.get('serial_number') or None) == (new_serial or None):
@@ -1652,6 +1666,8 @@ class DatabaseManager:
             now = datetime.now()
             for ticket in rows:
                 match = match_equipment(ticket.get('inventory_number'), equipment)
+                if match is None:
+                    match = match_equipment(ticket.get('serial_number'), equipment)
                 new_id = match['id'] if match else None
                 new_serial = match['serial_number'] if match else None
                 if ticket.get('equipment_id') == new_id and (ticket.get('serial_number') or None) == (new_serial or None):

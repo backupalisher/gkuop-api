@@ -563,8 +563,17 @@ async def api_get_tickets(
                 ticket_normalized = re.sub(r'[\s\-\./]', '', search_clean)
                 like_ticket_normalized = f"%{ticket_normalized}%"
 
-                # Цифровая часть для поиска по инвентарному номеру
+                # Цифровая часть для поиска по инвентарному номеру.
+                # Важно: не извлекать цифры из серийников вроде «LM0YFV2» → «02»,
+                # иначе ILIKE '%02%' даёт десятки ложных совпадений.
                 digits_only = re.sub(r'[^\d]', '', search_clean)
+                search_has_letters = bool(
+                    re.search(r'[A-Za-zА-Яа-яЁё]', search_clean)
+                )
+                use_inventory_digits = (
+                    (not search_has_letters)
+                    and len(digits_only) >= 4
+                )
 
                 conditions = []
                 params_list = []
@@ -587,7 +596,7 @@ async def api_get_tickets(
                 params_list.append(like_val)
 
                 # 2b. Поиск по нормализованному inventory_number (только цифры)
-                if digits_only:
+                if use_inventory_digits:
                     conditions.append(
                         "REGEXP_REPLACE(t.inventory_number, '[^0-9]', '', 'g') ILIKE %s ESCAPE '\\'"
                     )
@@ -608,7 +617,7 @@ async def api_get_tickets(
                     )"""
                 )
                 params_list.extend([like_val, like_val, like_val])
-                if digits_only and len(digits_only) >= 4:
+                if use_inventory_digits:
                     conditions.append(
                         """EXISTS (
                             SELECT 1 FROM equipment eq
