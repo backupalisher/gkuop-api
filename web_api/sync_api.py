@@ -62,6 +62,20 @@ def _decode_cursor(cursor: Optional[str]) -> Tuple[datetime, str, str]:
         return datetime(1970, 1, 1, tzinfo=timezone.utc), "", ""
 
 
+def _apply_equipment_fields(ticket: Dict[str, Any]) -> None:
+    """Подставляет модель/серийный/инв. из справочника для мобильного клиента."""
+    model = (ticket.pop("equipment_model", None) or "").strip()
+    serial = (ticket.pop("equipment_serial", None) or "").strip()
+    inventory = (ticket.pop("equipment_inventory", None) or "").strip()
+    if model:
+        ticket["printer_model"] = model
+    if serial and not (ticket.get("serial_number") or "").strip():
+        ticket["serial_number"] = serial
+    if inventory and inventory not in ("", "-", "—", "*"):
+        if not (ticket.get("inventory_number") or "").strip():
+            ticket["inventory_number"] = inventory
+
+
 def _serialize_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
     data = dict(row)
     for key in ("first_received_date", "last_updated_date", "created_at", "completed_at"):
@@ -69,6 +83,9 @@ def _serialize_ticket(row: Dict[str, Any]) -> Dict[str, Any]:
             data[key] = _to_iso(data.get(key)) if data.get(key) else None
     if "office" in data:
         data["office_abbreviated"] = abbreviate_office(data.get("office"))
+    # Служебные поля join'а не должны уходить клиенту, если остались.
+    for key in ("equipment_model", "equipment_serial", "equipment_inventory"):
+        data.pop(key, None)
     return data
 
 
@@ -117,17 +134,20 @@ async def api_sync_changes(
             db.cursor.execute(
                 f"""
                 SELECT t.*,
-                       (
-                           SELECT e.model || ' - ' || e.serial_number ||
-                                  CASE
-                                      WHEN COALESCE(NULLIF(TRIM(e.inventory_number), ''), '') <> ''
-                                      THEN ' - ' || e.inventory_number
-                                      ELSE ''
-                                  END
-                           FROM equipment e
-                           WHERE e.id = t.equipment_id
-                       ) AS equipment_label
+                       e.model AS equipment_model,
+                       e.serial_number AS equipment_serial,
+                       e.inventory_number AS equipment_inventory,
+                       CASE
+                           WHEN e.id IS NULL THEN NULL
+                           ELSE e.model || ' - ' || e.serial_number ||
+                                CASE
+                                    WHEN COALESCE(NULLIF(TRIM(e.inventory_number), ''), '') <> ''
+                                    THEN ' - ' || e.inventory_number
+                                    ELSE ''
+                                END
+                       END AS equipment_label
                 FROM tickets t
+                LEFT JOIN equipment e ON e.id = t.equipment_id
                 WHERE COALESCE(t.last_updated_date, t.first_received_date, t.created_at) > %s
                 {office_sql}
                 ORDER BY COALESCE(t.last_updated_date, t.first_received_date, t.created_at) ASC,
@@ -138,6 +158,7 @@ async def api_sync_changes(
             )
             for row in db.cursor.fetchall():
                 ticket = dict(row)
+                _apply_equipment_fields(ticket)
                 updated = ticket.get("last_updated_date") or ticket.get("first_received_date") or ticket.get("created_at")
                 changes.append({
                     "entity": "ticket",

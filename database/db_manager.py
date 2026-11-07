@@ -1573,8 +1573,19 @@ class DatabaseManager:
                 device.get('serial_number'),
                 device.get('inventory_number'),
             )
-            if not ticket.get('serial_number'):
-                ticket['serial_number'] = device.get('serial_number')
+            # Для мобильного/веб-отображения подставляем поля справочника,
+            # чтобы не показывать сырой printer_model вида «MX310dn/MX410dn»
+            # и не терять серийный/инвентарный при пустых колонках заявки.
+            catalog_model = (device.get('model') or '').strip()
+            catalog_serial = (device.get('serial_number') or '').strip()
+            catalog_inv = (device.get('inventory_number') or '').strip()
+            if catalog_model:
+                ticket['printer_model'] = catalog_model
+            if catalog_serial and not (ticket.get('serial_number') or '').strip():
+                ticket['serial_number'] = catalog_serial
+            if catalog_inv and catalog_inv not in ('', '-', '—', '*'):
+                if not (ticket.get('inventory_number') or '').strip():
+                    ticket['inventory_number'] = catalog_inv
         return tickets
 
     def link_ticket_to_equipment(self, ticket_number: str, touch_updated: bool = False) -> bool:
