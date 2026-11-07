@@ -3,12 +3,14 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:intl/intl.dart';
 
+import '../../../../app/preferences/hide_done_tickets_controller.dart';
 import '../../../../app/theme/app_colors.dart';
 import '../../../../core/database/app_database.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../core/sync/sync_engine.dart';
 import '../../../../shared/widgets/app_header_menu.dart';
 import '../../../../shared/widgets/component_pill.dart';
+import '../../../../shared/widgets/soglasovano_block.dart';
 import '../../../../shared/widgets/status_badge.dart';
 
 enum TicketsTab { active, tasks, archived }
@@ -24,43 +26,49 @@ final ticketsStreamProvider = StreamProvider.autoDispose<List<Ticket>>((ref) {
   final search = ref.watch(_searchProvider);
   final tab = ref.watch(_tabProvider);
   final office = ref.watch(_officeProvider);
-  return ref.watch(ticketsRepositoryProvider).watchTickets(
+  final hideDone = ref.watch(hideDoneTicketsProvider);
+  return ref
+      .watch(ticketsRepositoryProvider)
+      .watchTickets(
         username: user.username,
         archived: tab == TicketsTab.archived,
         tasksOnly: tab == TicketsTab.tasks,
         search: search,
         office: office,
-      );
-});
-
-final _officesProvider = StreamProvider.autoDispose<List<({String office, String label})>>((
-  ref,
-) {
-  final auth = ref.watch(authControllerProvider);
-  final user = auth.user;
-  if (user == null) return const Stream.empty();
-  final db = ref.watch(appDatabaseProvider);
-  return (db.select(db.tickets)..where(
-        (t) => t.accountUsername.equals(user.username),
-      ))
-      .watch()
-      .map((rows) {
-        final labels = <String, String>{};
-        for (final ticket in rows) {
-          final office = ticket.office?.trim();
-          if (office == null || office.isEmpty) continue;
-          final abbreviated = ticket.officeAbbreviated?.trim();
-          labels[office] = (abbreviated != null && abbreviated.isNotEmpty)
-              ? abbreviated
-              : office;
-        }
-        final items = labels.entries
-            .map((entry) => (office: entry.key, label: entry.value))
-            .toList();
-        items.sort((a, b) => a.label.compareTo(b.label));
-        return items;
+      )
+      .map((items) {
+        if (tab != TicketsTab.active || !hideDone) return items;
+        return items.where((t) => !isDoneTicketStatus(t.status)).toList();
       });
 });
+
+final _officesProvider =
+    StreamProvider.autoDispose<List<({String office, String label})>>((ref) {
+      final auth = ref.watch(authControllerProvider);
+      final user = auth.user;
+      if (user == null) return const Stream.empty();
+      final db = ref.watch(appDatabaseProvider);
+      return (db.select(db.tickets)..where(
+            (t) => t.accountUsername.equals(user.username),
+          ))
+          .watch()
+          .map((rows) {
+            final labels = <String, String>{};
+            for (final ticket in rows) {
+              final office = ticket.office?.trim();
+              if (office == null || office.isEmpty) continue;
+              final abbreviated = ticket.officeAbbreviated?.trim();
+              labels[office] = (abbreviated != null && abbreviated.isNotEmpty)
+                  ? abbreviated
+                  : office;
+            }
+            final items = labels.entries
+                .map((entry) => (office: entry.key, label: entry.value))
+                .toList();
+            items.sort((a, b) => a.label.compareTo(b.label));
+            return items;
+          });
+    });
 
 class TicketsListScreen extends ConsumerWidget {
   const TicketsListScreen({super.key});
@@ -70,10 +78,13 @@ class TicketsListScreen extends ConsumerWidget {
     final ticketsAsync = ref.watch(ticketsStreamProvider);
     final auth = ref.watch(authControllerProvider);
     final tab = ref.watch(_tabProvider);
+    final office = ref.watch(_officeProvider);
     final dateFmt = DateFormat('dd.MM.yyyy, HH:mm');
     final scheme = Theme.of(context).colorScheme;
+    final count = ticketsAsync.valueOrNull?.length;
 
     return Scaffold(
+      backgroundColor: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
       appBar: AppBar(
         title: Text.rich(
           TextSpan(
@@ -94,6 +105,15 @@ class TicketsListScreen extends ConsumerWidget {
                   fontSize: 18,
                 ),
               ),
+              if (count != null)
+                TextSpan(
+                  text: '  $count',
+                  style: TextStyle(
+                    fontWeight: FontWeight.w600,
+                    color: scheme.onSurfaceVariant,
+                    fontSize: 16,
+                  ),
+                ),
             ],
           ),
         ),
@@ -134,26 +154,30 @@ class TicketsListScreen extends ConsumerWidget {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
             child: Row(
               children: [
-                _TabChip(
-                  label: 'Активные',
-                  icon: Icons.description_outlined,
-                  selected: tab == TicketsTab.active,
-                  onTap: () =>
-                      ref.read(_tabProvider.notifier).state = TicketsTab.active,
+                Expanded(
+                  child: _TabChip(
+                    label: 'Активные',
+                    icon: Icons.description_outlined,
+                    selected: tab == TicketsTab.active,
+                    onTap: () => ref.read(_tabProvider.notifier).state =
+                        TicketsTab.active,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                _TabChip(
-                  label: 'Задачи',
-                  icon: Icons.checklist_outlined,
-                  selected: tab == TicketsTab.tasks,
-                  onTap: () =>
-                      ref.read(_tabProvider.notifier).state = TicketsTab.tasks,
+                Expanded(
+                  child: _TabChip(
+                    label: 'Задачи',
+                    icon: Icons.checklist_outlined,
+                    selected: tab == TicketsTab.tasks,
+                    onTap: () =>
+                        ref.read(_tabProvider.notifier).state = TicketsTab.tasks,
+                  ),
                 ),
                 const SizedBox(width: 8),
-                _TabChip(
-                  label: 'Архив',
+                _IconTabButton(
                   icon: Icons.folder_outlined,
                   selected: tab == TicketsTab.archived,
+                  tooltip: 'Архив',
                   onTap: () => ref.read(_tabProvider.notifier).state =
                       TicketsTab.archived,
                 ),
@@ -161,18 +185,32 @@ class TicketsListScreen extends ConsumerWidget {
             ),
           ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
-            child: _OfficeFilter(),
-          ),
-          Padding(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 8),
-            child: TextField(
-              decoration: const InputDecoration(
-                hintText:
-                    'Поиск: № заявки, серийный, инв. номер, тема…',
-                suffixIcon: Icon(Icons.search, size: 20),
-              ),
-              onChanged: (v) => ref.read(_searchProvider.notifier).state = v,
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: InputDecoration(
+                      hintText: 'Поиск: № заявки, серийный,…',
+                      prefixIcon: const Icon(Icons.search, size: 20),
+                      isDense: true,
+                      filled: true,
+                      fillColor: scheme.surfaceContainerHighest.withValues(
+                        alpha: 0.55,
+                      ),
+                    ),
+                    onChanged: (v) =>
+                        ref.read(_searchProvider.notifier).state = v,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                _IconTabButton(
+                  icon: Icons.apartment_outlined,
+                  selected: office != null,
+                  tooltip: office == null ? 'Фильтр по адресу' : 'Адрес выбран',
+                  onTap: () => _pickOffice(context, ref),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -198,22 +236,10 @@ class TicketsListScreen extends ConsumerWidget {
                   },
                   child: ListView.separated(
                     padding: const EdgeInsets.fromLTRB(12, 0, 12, 16),
-                    itemCount: items.length + 1,
+                    itemCount: items.length,
                     separatorBuilder: (_, __) => const SizedBox(height: 10),
                     itemBuilder: (context, index) {
-                      if (index == 0) {
-                        return Padding(
-                          padding: const EdgeInsets.only(bottom: 4, top: 4),
-                          child: Text(
-                            'Найдено заявок: ${items.length}',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        );
-                      }
-                      final t = items[index - 1];
+                      final t = items[index];
                       return _TicketCard(
                         ticket: t,
                         dateFmt: dateFmt,
@@ -232,6 +258,88 @@ class TicketsListScreen extends ConsumerWidget {
       ),
     );
   }
+}
+
+Future<void> _pickOffice(BuildContext context, WidgetRef ref) async {
+  final offices = ref.read(_officesProvider).valueOrNull ?? const [];
+  final selected = ref.read(_officeProvider);
+  final scheme = Theme.of(context).colorScheme;
+  final picked = await showModalBottomSheet<Object>(
+    context: context,
+    showDragHandle: true,
+    isScrollControlled: true,
+    builder: (ctx) {
+      final maxHeight = MediaQuery.sizeOf(ctx).height * 0.6;
+      return SafeArea(
+        child: SizedBox(
+          height: maxHeight,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                child: Text(
+                  'Адрес',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w700,
+                    color: scheme.onSurface,
+                  ),
+                ),
+              ),
+              Expanded(
+                child: ListView.builder(
+                  itemCount: offices.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == 0) {
+                      final isSelected = selected == null;
+                      return ListTile(
+                        title: const Text('Все адреса'),
+                        trailing: isSelected
+                            ? Icon(Icons.check, color: scheme.primary)
+                            : null,
+                        selected: isSelected,
+                        onTap: () =>
+                            Navigator.pop(ctx, _OfficeFilterClear.instance),
+                      );
+                    }
+                    final item = offices[index - 1];
+                    final isSelected = item.office == selected;
+                    return ListTile(
+                      title: Text(
+                        item.label,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                      trailing: isSelected
+                          ? Icon(Icons.check, color: scheme.primary)
+                          : null,
+                      selected: isSelected,
+                      onTap: () => Navigator.pop(ctx, item.office),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    },
+  );
+
+  if (picked == null) return;
+  if (picked is _OfficeFilterClear) {
+    ref.read(_officeProvider.notifier).state = null;
+    return;
+  }
+  if (picked is String) {
+    ref.read(_officeProvider.notifier).state = picked;
+  }
+}
+
+class _OfficeFilterClear {
+  const _OfficeFilterClear._();
+  static const instance = _OfficeFilterClear._();
 }
 
 class _TicketCard extends StatelessWidget {
@@ -254,14 +362,14 @@ class _TicketCard extends StatelessWidget {
     final officeCabinet = (office != null && office.isNotEmpty)
         ? (cabinet != null && cabinet.isNotEmpty ? '$office / $cabinet' : office)
         : (cabinet ?? '');
-    final requiredAction = ticket.requiredAction?.trim();
     final component = ticket.component?.trim();
-    final hasRequired =
-        requiredAction != null &&
-        requiredAction.isNotEmpty &&
-        requiredAction != '—';
+    final soglasovano = ticket.soglasovanoLine?.trim();
     final hasComponent =
         component != null && component.isNotEmpty && component != '—';
+    final hasSoglasovano =
+        soglasovano != null && soglasovano.isNotEmpty && soglasovano != '—';
+    final statusLower = (ticket.status ?? '').toLowerCase();
+    final needsParts = statusLower.contains('комплект');
 
     return Material(
       color: scheme.surface,
@@ -361,19 +469,20 @@ class _TicketCard extends StatelessWidget {
                     style: const TextStyle(fontSize: 14),
                   ),
                 ),
-              if (hasRequired)
+              if (hasSoglasovano && needsParts)
                 _CardRow(
-                  label: 'Требуется',
-                  child: Text(
-                    requiredAction,
-                    textAlign: TextAlign.right,
-                    style: const TextStyle(fontSize: 14),
-                  ),
-                ),
-              if (hasComponent)
+                  label: 'Согласовано',
+                  child: SoglasovanoBlock(value: soglasovano, compact: true),
+                )
+              else if (hasComponent)
                 _CardRow(
                   label: 'Комплектующее',
                   child: ComponentPill(text: component),
+                ),
+              if (hasSoglasovano && !needsParts && hasComponent)
+                _CardRow(
+                  label: 'Согласовано',
+                  child: SoglasovanoBlock(value: soglasovano, compact: true),
                 ),
               if (officeCabinet.isNotEmpty)
                 _CardRow(
@@ -456,46 +565,44 @@ class _TabChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    return Expanded(
-      child: Material(
-        color: selected ? const Color(0xFF2F80ED) : scheme.surface,
+    return Material(
+      color: selected ? const Color(0xFF2F80ED) : scheme.surface,
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: onTap,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            alignment: Alignment.center,
-            padding: const EdgeInsets.symmetric(vertical: 10),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(
-                color: selected ? const Color(0xFF2F80ED) : scheme.outline,
-              ),
+        child: Container(
+          alignment: Alignment.center,
+          padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? const Color(0xFF2F80ED) : scheme.outline,
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                if (icon != null) ...[
-                  Icon(
-                    icon,
-                    size: 16,
-                    color: selected ? Colors.white : scheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 4),
-                ],
-                Flexible(
-                  child: Text(
-                    label,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: selected ? Colors.white : scheme.onSurface,
-                    ),
+          ),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              if (icon != null) ...[
+                Icon(
+                  icon,
+                  size: 16,
+                  color: selected ? Colors.white : scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 4),
+              ],
+              Flexible(
+                child: Text(
+                  label,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    color: selected ? Colors.white : scheme.onSurface,
                   ),
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
@@ -503,140 +610,47 @@ class _TabChip extends StatelessWidget {
   }
 }
 
-class _OfficeFilter extends ConsumerWidget {
-  const _OfficeFilter();
+class _IconTabButton extends StatelessWidget {
+  const _IconTabButton({
+    required this.icon,
+    required this.selected,
+    required this.onTap,
+    this.tooltip,
+  });
+
+  final IconData icon;
+  final bool selected;
+  final VoidCallback onTap;
+  final String? tooltip;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final offices = ref.watch(_officesProvider).valueOrNull ?? const [];
-    final selected = ref.watch(_officeProvider);
+  Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
-    String selectedLabel = 'Все адреса';
-    if (selected != null) {
-      selectedLabel = selected;
-      for (final item in offices) {
-        if (item.office == selected) {
-          selectedLabel = item.label;
-          break;
-        }
-      }
-    }
-
-    // Единый Material-вид на Android и iOS: нативный DropdownButtonFormField
-    // на iOS выглядит иначе (стрелка/меню/поле).
-    return Material(
-      color: Colors.transparent,
+    final button = Material(
+      color: selected ? const Color(0xFF2F80ED) : scheme.surface,
+      borderRadius: BorderRadius.circular(10),
       child: InkWell(
-        borderRadius: BorderRadius.circular(8),
-        onTap: () => _pickOffice(
-          context: context,
-          ref: ref,
-          offices: offices,
-          selected: selected,
-        ),
-        child: InputDecorator(
-          isEmpty: false,
-          decoration: const InputDecoration(
-            labelText: 'Адрес',
-            isDense: true,
-            suffixIcon: Icon(Icons.arrow_drop_down, size: 24),
-          ),
-          child: Text(
-            selectedLabel,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-              fontSize: 14,
-              color: scheme.onSurface,
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: Container(
+          width: 44,
+          height: 44,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected ? const Color(0xFF2F80ED) : scheme.outline,
             ),
+          ),
+          child: Icon(
+            icon,
+            size: 20,
+            color: selected ? Colors.white : scheme.onSurfaceVariant,
           ),
         ),
       ),
     );
+    if (tooltip == null) return button;
+    return Tooltip(message: tooltip!, child: button);
   }
-
-  Future<void> _pickOffice({
-    required BuildContext context,
-    required WidgetRef ref,
-    required List<({String office, String label})> offices,
-    required String? selected,
-  }) async {
-    final scheme = Theme.of(context).colorScheme;
-    final picked = await showModalBottomSheet<Object>(
-      context: context,
-      showDragHandle: true,
-      isScrollControlled: true,
-      builder: (ctx) {
-        final maxHeight = MediaQuery.sizeOf(ctx).height * 0.6;
-        return SafeArea(
-          child: SizedBox(
-            height: maxHeight,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                  child: Text(
-                    'Адрес',
-                    style: TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w700,
-                      color: scheme.onSurface,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: offices.length + 1,
-                    itemBuilder: (context, index) {
-                      if (index == 0) {
-                        final isSelected = selected == null;
-                        return ListTile(
-                          title: const Text('Все адреса'),
-                          trailing: isSelected
-                              ? Icon(Icons.check, color: scheme.primary)
-                              : null,
-                          selected: isSelected,
-                          onTap: () => Navigator.pop(ctx, _OfficeFilterClear.instance),
-                        );
-                      }
-                      final item = offices[index - 1];
-                      final isSelected = item.office == selected;
-                      return ListTile(
-                        title: Text(
-                          item.label,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: isSelected
-                            ? Icon(Icons.check, color: scheme.primary)
-                            : null,
-                        selected: isSelected,
-                        onTap: () => Navigator.pop(ctx, item.office),
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
-    );
-
-    if (picked == null) return;
-    if (picked is _OfficeFilterClear) {
-      ref.read(_officeProvider.notifier).state = null;
-      return;
-    }
-    if (picked is String) {
-      ref.read(_officeProvider.notifier).state = picked;
-    }
-  }
-}
-
-/// Sentinel: отличить «Все адреса» от закрытия sheet без выбора (null).
-class _OfficeFilterClear {
-  const _OfficeFilterClear._();
-  static const instance = _OfficeFilterClear._();
 }

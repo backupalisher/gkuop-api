@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:open_filex/open_filex.dart';
 
+import '../../app/preferences/hide_done_tickets_controller.dart';
 import '../../app/theme/app_colors.dart';
 import '../../app/theme/theme_controller.dart';
 import '../../core/di/providers.dart';
@@ -19,6 +20,7 @@ class AppHeaderMenuButton extends ConsumerWidget {
     final user = auth.user;
     final themeMode = ref.watch(themeControllerProvider);
     final themeCtrl = ref.read(themeControllerProvider.notifier);
+    final hideDone = ref.watch(hideDoneTicketsProvider);
 
     return PopupMenuButton<_MenuAction>(
       tooltip: 'Меню',
@@ -33,6 +35,24 @@ class AppHeaderMenuButton extends ConsumerWidget {
               contentPadding: EdgeInsets.zero,
               leading: Icon(Icons.sync, size: 20),
               title: Text('Синхронизация'),
+            ),
+          ),
+          PopupMenuItem(
+            value: _MenuAction.hideDone,
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(
+                hideDone
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+                size: 20,
+              ),
+              title: Text(
+                hideDone
+                    ? 'Показать выполненные'
+                    : 'Скрыть выполненные',
+              ),
             ),
           ),
           PopupMenuItem(
@@ -156,6 +176,8 @@ class AppHeaderMenuButton extends ConsumerWidget {
     switch (action) {
       case _MenuAction.sync:
         context.push('/sync');
+      case _MenuAction.hideDone:
+        await ref.read(hideDoneTicketsProvider.notifier).toggle();
       case _MenuAction.theme:
         await ref.read(themeControllerProvider.notifier).cycle();
       case _MenuAction.users:
@@ -296,6 +318,7 @@ class AppHeaderMenuButton extends ConsumerWidget {
 
 enum _MenuAction {
   sync,
+  hideDone,
   theme,
   users,
   equipment,

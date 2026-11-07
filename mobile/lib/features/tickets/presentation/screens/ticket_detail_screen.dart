@@ -13,6 +13,7 @@ import '../../../../core/database/app_database.dart';
 import '../../../../core/di/providers.dart';
 import '../../../../core/errors/failures.dart';
 import '../../../../shared/widgets/component_pill.dart';
+import '../../../../shared/widgets/soglasovano_block.dart';
 import '../../../../shared/widgets/status_badge.dart';
 
 final ticketProvider = FutureProvider.autoDispose.family<Ticket?, String>((
@@ -25,6 +26,20 @@ final ticketProvider = FutureProvider.autoDispose.family<Ticket?, String>((
       .watch(ticketsRepositoryProvider)
       .getTicket(user.username, ticketNumber);
 });
+
+final ticketHistoryProvider =
+    FutureProvider.autoDispose.family<List<Map<String, dynamic>>, String>((
+      ref,
+      ticketNumber,
+    ) async {
+      try {
+        return await ref
+            .watch(ticketsRepositoryProvider)
+            .fetchTicketHistory(ticketNumber);
+      } catch (_) {
+        return const [];
+      }
+    });
 
 final attachmentsProvider =
     StreamProvider.autoDispose.family<List<TicketAttachment>, String>((
@@ -52,12 +67,21 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRemoteAttachments());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _loadRemoteExtras());
   }
 
-  Future<void> _loadRemoteAttachments() async {
+  Future<void> _loadRemoteExtras() async {
     final user = ref.read(authControllerProvider).user;
     if (user == null) return;
+    try {
+      await ref.read(ticketsRepositoryProvider).refreshTicketFieldsFromServer(
+            username: user.username,
+            ticketNumber: widget.ticketNumber,
+          );
+      ref.invalidate(ticketProvider(widget.ticketNumber));
+    } catch (_) {
+      // Оффлайн — локальные поля
+    }
     try {
       await ref.read(ticketsRepositoryProvider).refreshAttachmentsFromServer(
             username: user.username,
@@ -66,6 +90,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
     } catch (_) {
       // Оффлайн — показываем только локальные
     }
+    ref.invalidate(ticketHistoryProvider(widget.ticketNumber));
   }
 
   @override
@@ -80,6 +105,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
     final canDeleteImg = auth.user?.hasPermission('delete_images') ?? false;
     final dateFmt = DateFormat('dd.MM.yyyy, HH:mm');
     final scheme = Theme.of(context).colorScheme;
+    final historyAsync = ref.watch(ticketHistoryProvider(widget.ticketNumber));
 
     return Scaffold(
       appBar: AppBar(title: Text('Заявка #${widget.ticketNumber}')),
@@ -88,6 +114,7 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
           if (t == null) {
             return const Center(child: Text('Заявка не найдена локально'));
           }
+          final soglasovano = t.soglasovanoLine?.trim();
           return ListView(
             padding: const EdgeInsets.all(16),
             children: [
@@ -124,6 +151,19 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       _tile(context, 'Комплектующее', t.component, pill: true),
+                      if (soglasovano != null && soglasovano.isNotEmpty) ...[
+                        Text(
+                          'Согласование',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: scheme.onSurfaceVariant,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        SoglasovanoBlock(value: soglasovano),
+                        const SizedBox(height: 12),
+                      ],
                       _tile(
                         context,
                         'Аппарат',
@@ -157,6 +197,18 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
                     ],
                   ),
                 ),
+              ),
+              const SizedBox(height: 16),
+              historyAsync.when(
+                data: (history) => _TicketHistorySection(
+                  history: history,
+                  dateFmt: dateFmt,
+                ),
+                loading: () => const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 8),
+                  child: Center(child: CircularProgressIndicator()),
+                ),
+                error: (_, __) => const SizedBox.shrink(),
               ),
               const SizedBox(height: 16),
               _AttachmentsSection(
@@ -332,6 +384,155 @@ class _TicketDetailScreenState extends ConsumerState<TicketDetailScreen> {
           );
       ref.invalidate(ticketProvider(widget.ticketNumber));
     }
+  }
+}
+
+class _TicketHistorySection extends StatelessWidget {
+  const _TicketHistorySection({
+    required this.history,
+    required this.dateFmt,
+  });
+
+  final List<Map<String, dynamic>> history;
+  final DateFormat dateFmt;
+
+  @override
+  Widget build(BuildContext context) {
+    if (history.isEmpty) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(14),
+          child: Text(
+            'История изменений недоступна оффлайн или пуста.',
+            style: TextStyle(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+              fontSize: 13,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 8),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              'История изменений (${history.length})',
+              style: const TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 10),
+            for (final item in history) _historyItem(context, item),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _historyItem(BuildContext context, Map<String, dynamic> item) {
+    final scheme = Theme.of(context).colorScheme;
+    final type = item['type']?.toString() ?? 'snapshot';
+    final received = item['received_date'] ?? item['created_at'];
+    DateTime? when;
+    if (received != null) {
+      when = DateTime.tryParse(received.toString())?.toLocal();
+    }
+
+    String? statusBefore;
+    String? statusAfter;
+    final changes = item['changes'];
+    final changedFields = item['changed_fields'];
+    if (changes is Map) {
+      final st = changes['status'];
+      if (st is Map) {
+        statusBefore = st['old']?.toString() ?? st['before']?.toString();
+        statusAfter = st['new']?.toString() ?? st['after']?.toString();
+      }
+    }
+    if (statusAfter == null && changedFields is Map) {
+      statusAfter = changedFields['status']?.toString();
+    }
+    statusBefore ??= item['status_before']?.toString();
+    statusAfter ??= item['status_after']?.toString();
+
+    final soglasovano = changedFields is Map
+        ? changedFields['soglasovano_line']?.toString()
+        : null;
+    final component = changedFields is Map
+        ? changedFields['component']?.toString()
+        : null;
+    final comment = item['comment_text']?.toString();
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 12),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(10),
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: scheme.outlineVariant),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(
+                  type == 'comment' ? Icons.chat_bubble_outline : Icons.mail_outline,
+                  size: 16,
+                  color: scheme.onSurfaceVariant,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    when != null ? dateFmt.format(when) : '—',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: scheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            if (statusBefore != null || statusAfter != null) ...[
+              const SizedBox(height: 6),
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
+                children: [
+                  if (statusBefore != null && statusBefore.isNotEmpty)
+                    StatusBadge(status: statusBefore),
+                  if (statusBefore != null &&
+                      statusBefore.isNotEmpty &&
+                      statusAfter != null)
+                    Icon(Icons.arrow_forward, size: 14, color: scheme.onSurfaceVariant),
+                  if (statusAfter != null && statusAfter.isNotEmpty)
+                    StatusBadge(status: statusAfter),
+                ],
+              ),
+            ],
+            if (component != null && component.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              ComponentPill(text: component),
+            ],
+            if (soglasovano != null && soglasovano.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              SoglasovanoBlock(value: soglasovano),
+            ],
+            if (comment != null && comment.trim().isNotEmpty) ...[
+              const SizedBox(height: 6),
+              Text(comment, style: const TextStyle(fontSize: 13)),
+            ],
+          ],
+        ),
+      ),
+    );
   }
 }
 

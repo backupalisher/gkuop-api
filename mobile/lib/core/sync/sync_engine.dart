@@ -187,11 +187,21 @@ class SyncEngine {
           '/api/tickets/${payload['ticket_number']}/complete',
           headers: headers,
         );
+        await (_db.update(
+          _db.tickets,
+        )..where((t) => t.localId.equals(op.entityLocalId))).write(
+          const TicketsCompanion(syncStatus: Value(SyncStatuses.synced)),
+        );
         break;
       case 'UNCOMPLETE_TICKET':
         await _api.post(
           '/api/tickets/${payload['ticket_number']}/uncomplete',
           headers: headers,
+        );
+        await (_db.update(
+          _db.tickets,
+        )..where((t) => t.localId.equals(op.entityLocalId))).write(
+          const TicketsCompanion(syncStatus: Value(SyncStatuses.synced)),
         );
         break;
       case 'ARCHIVE_TICKET':
@@ -359,11 +369,40 @@ class SyncEngine {
     if (entity == 'ticket' && operation == 'upsert' && data != null) {
       final ticketNumber = data['ticket_number']?.toString() ?? id!;
       final existing = await _db.getTicketByNumber(username, ticketNumber);
-      // Не затираем pendingUpdate локальными правками
+      // Не затираем локальные pending-правки целиком…
       if (existing != null &&
           (existing.syncStatus == SyncStatuses.pendingUpdate ||
               existing.syncStatus == SyncStatuses.conflict)) {
-        return;
+        final serverDt = _parseDt(data['last_updated_date']);
+        final localDt = existing.lastUpdatedDate;
+        // …но письмо/сервер имеет привилегию по статусу, если версия не старше.
+        final serverWins = serverDt != null &&
+            (localDt == null || !serverDt.isBefore(localDt));
+        if (!serverWins) {
+          // Частично подтягиваем статус/согласование из письма при любом pull.
+          final serverStatus = data['status'] as String?;
+          if (serverStatus != null &&
+              serverStatus.trim().isNotEmpty &&
+              serverStatus != existing.status) {
+            await (_db.update(
+              _db.tickets,
+            )..where((t) => t.localId.equals(existing.localId))).write(
+              TicketsCompanion(
+                status: Value(serverStatus),
+                component: Value(data['component'] as String?),
+                soglasovanoLine: Value(data['soglasovano_line'] as String?),
+                completedAt: Value(_parseDt(data['completed_at'])),
+                completedBy: Value(data['completed_by'] as String?),
+                lastStatus: Value(data['last_status'] as String?),
+                lastUpdatedDate: Value(serverDt ?? existing.lastUpdatedDate),
+                syncStatus: const Value(SyncStatuses.synced),
+                lastSyncedAt: Value(DateTime.now().toUtc()),
+              ),
+            );
+          }
+          return;
+        }
+        // serverWins: полная перезапись ниже
       }
       final localId = existing?.localId ?? ticketNumber;
       await _db

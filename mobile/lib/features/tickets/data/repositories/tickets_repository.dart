@@ -74,6 +74,67 @@ class TicketsRepository {
     return _db.getTicketByNumber(username, ticketNumber);
   }
 
+  /// История заявки с сервера (письма + ручные изменения статусов).
+  Future<List<Map<String, dynamic>>> fetchTicketHistory(
+    String ticketNumber,
+  ) async {
+    final response = await _api.get('/api/tickets/$ticketNumber');
+    final body = response.data;
+    if (body is! Map) return const [];
+    final history = body['history'];
+    if (history is! List) return const [];
+    return history
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+  }
+
+  /// Подтягивает component/soglasovano_line/status с детального API
+  /// (история писем на сервере — источник истины для согласования).
+  Future<void> refreshTicketFieldsFromServer({
+    required String username,
+    required String ticketNumber,
+  }) async {
+    final response = await _api.get('/api/tickets/$ticketNumber');
+    final body = response.data;
+    if (body is! Map) return;
+    final ticketData = body['ticket'];
+    if (ticketData is! Map) return;
+    final data = Map<String, dynamic>.from(ticketData);
+    final existing = await _db.getTicketByNumber(username, ticketNumber);
+    if (existing == null) return;
+    if (existing.syncStatus == SyncStatuses.pendingUpdate ||
+        existing.syncStatus == SyncStatuses.conflict) {
+      // Статус/согласование из письма всё равно обновляем.
+    }
+    DateTime? parseDt(dynamic v) {
+      if (v == null) return null;
+      if (v is DateTime) return v.toUtc();
+      return DateTime.tryParse(v.toString())?.toUtc();
+    }
+
+    await (_db.update(
+      _db.tickets,
+    )..where((t) => t.localId.equals(existing.localId))).write(
+      TicketsCompanion(
+        status: Value(data['status'] as String? ?? existing.status),
+        component: Value(data['component'] as String?),
+        soglasovanoLine: Value(data['soglasovano_line'] as String?),
+        completedAt: Value(parseDt(data['completed_at'])),
+        completedBy: Value(data['completed_by'] as String?),
+        lastStatus: Value(data['last_status'] as String?),
+        lastUpdatedDate: Value(
+          parseDt(data['last_updated_date']) ?? existing.lastUpdatedDate,
+        ),
+        syncStatus: existing.syncStatus == SyncStatuses.pendingUpdate ||
+                existing.syncStatus == SyncStatuses.conflict
+            ? const Value.absent()
+            : const Value(SyncStatuses.synced),
+        lastSyncedAt: Value(DateTime.now().toUtc()),
+      ),
+    );
+  }
+
   Stream<List<TicketAttachment>> watchAttachments({
     required String username,
     required String ticketNumber,
